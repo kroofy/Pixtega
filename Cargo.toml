@@ -1,0 +1,38 @@
+[package]
+name = "image-service"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.98"
+license = "MIT OR Apache-2.0"
+description = "On-demand image derivation service: fetches a source image, derives a bounded variant, returns cacheable bytes."
+
+[dependencies]
+async-trait = "0.1"
+axum = "0.8"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1"
+bytes = "1"
+futures-util = "0.3"
+libvips = "=1.6.1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+toml = "0.8"
+url = "2"
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff"] }
+rcgen = "0.14"
+rustls = "0.23"
+rustls-pemfile = "2"
+tempfile = "3"
+tokio-rustls = "0.26"
+
+[lib]
+name = "image_service"
+path = "src/lib.rs"
+
+[[bin]]
+name = "image-service"
+path = "src/main.rs"
