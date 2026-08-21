@@ -133,10 +133,10 @@ pub fn load_from_file(path: &Path) -> Result<AppConfig, ConfigError> {
             path.display()
         ))
     })?;
-    let base_dir = match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
-        _ => PathBuf::from("."),
-    };
+    // A bare filename has `Some("")` as its parent; joining against `""`
+    // and against `"."` are equivalent once canonicalized, so no special
+    // case is needed beyond the `None` fallback for root-like paths.
+    let base_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
     load_from_str(&toml_text, &base_dir)
 }
 
