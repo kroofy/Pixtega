@@ -13,7 +13,7 @@ use axum::response::Response;
 use tokio::sync::Semaphore;
 
 use crate::config::AppConfig;
-use crate::errors::{Outcome, ProcessError};
+use crate::errors::{Outcome, ProcessError, RequestError};
 use crate::logging::CompletionEvent;
 use crate::processor;
 use crate::request::parse_request;
@@ -135,8 +135,17 @@ async fn respond(state: &AppState, method: &Method, uri: &Uri) -> (Response, Rep
         return (response, Report::new(Outcome::RejectedRequest));
     }
 
-    // `Uri` exposes the raw, still-percent-encoded path and query; the
-    // request-target length check is inside `parse_request`.
+    // `parse_request` bounds the origin-form target (path + query). An
+    // HTTP/1.1 absolute-form target additionally carries a scheme and
+    // authority; bound the whole received target here so no request-target
+    // form evades the 8192-byte limit.
+    if uri.to_string().len() > crate::request::MAX_TARGET_BYTES {
+        let err = RequestError::TargetTooLong;
+        let response = error_response(state, taxonomy_status(err.status()), err.public_message());
+        return (response, Report::new(err.outcome()));
+    }
+
+    // `Uri` exposes the raw, still-percent-encoded path and query.
     let resolved = match parse_request(&state.config, uri.path(), uri.query()) {
         Ok(resolved) => resolved,
         Err(err) => {
@@ -241,10 +250,14 @@ fn success_response(state: &AppState, resolved: &ResolvedRequest, body: Vec<u8>)
         .expect("static header set is always valid")
 }
 
-/// JSON error body built with serde_json, so an internal message could never
+/// JSON error body built with serde_json, so an internal message can never
 /// corrupt the body even if a non-static message were ever introduced.
+pub fn error_body(message: &str) -> String {
+    serde_json::json!({ "error": message }).to_string()
+}
+
 fn error_response(state: &AppState, status: StatusCode, message: &str) -> Response {
-    let body = serde_json::json!({ "error": message }).to_string();
+    let body = error_body(message);
     let cache_control = if status == StatusCode::NOT_FOUND {
         format!("public, max-age={}", state.config.not_found_ttl_seconds)
     } else {

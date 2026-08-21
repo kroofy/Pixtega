@@ -538,6 +538,54 @@ fn webp_and_avif_sources_are_accepted() {
     assert_eq!(decode_with_image_crate(&out).dimensions(), (150, 100));
 }
 
+/// A MIAF-style AVIF whose `ftyp` major brand is `mif1` and that carries
+/// `avif` only in the compatible-brands list must still be accepted.
+#[test]
+fn avif_with_mif1_major_brand_is_accepted() {
+    init_vips();
+    let mut avif = process_image(
+        &jpeg_fixture(300, 200),
+        &tf(300, OutputFormat::Avif, 55),
+        MP,
+    )
+    .unwrap();
+
+    // Sanity: patching assumes an ISO-BMFF ftyp box at the start whose
+    // compatible-brands list (bytes 16..box_len) includes `avif`.
+    assert_eq!(&avif[4..8], b"ftyp", "fixture must start with ftyp");
+    let box_len = u32::from_be_bytes([avif[0], avif[1], avif[2], avif[3]]) as usize;
+    let (compat_brands, _) = avif[16..box_len].as_chunks::<4>();
+    let compat_has_avif = compat_brands.iter().any(|b| b == b"avif" || b == b"avis");
+    assert!(
+        compat_has_avif,
+        "encoder fixture lacks avif in compatible brands; test needs a new patch strategy"
+    );
+
+    avif[8..12].copy_from_slice(b"mif1");
+    let out = process_image(&avif, &tf(150, OutputFormat::Webp, 80), MP)
+        .expect("mif1-major AVIF must be accepted");
+    assert_eq!(decode_with_image_crate(&out).dimensions(), (150, 100));
+
+    // A container with no AVIF brand anywhere (HEIC-style) stays rejected.
+    let mut heic = process_image(
+        &jpeg_fixture(300, 200),
+        &tf(300, OutputFormat::Avif, 55),
+        MP,
+    )
+    .unwrap();
+    let box_len = u32::from_be_bytes([heic[0], heic[1], heic[2], heic[3]]) as usize;
+    heic[8..12].copy_from_slice(b"heic");
+    for offset in (16..box_len).step_by(4) {
+        if &heic[offset..offset + 4] == b"avif" || &heic[offset..offset + 4] == b"avis" {
+            heic[offset..offset + 4].copy_from_slice(b"heic");
+        }
+    }
+    assert_undecodable(
+        process_image(&heic, &tf(150, OutputFormat::Webp, 80), MP),
+        "heic-branded container",
+    );
+}
+
 #[test]
 fn verify_encoders_succeeds_for_every_enabled_format() {
     init_vips();

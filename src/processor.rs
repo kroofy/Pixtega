@@ -309,11 +309,26 @@ fn sniff_loader(bytes: &[u8]) -> Result<SniffedKind, ProcessError> {
         .ok_or_else(|| undecodable(format!("unsupported image loader: {name}")))
 }
 
-/// True when the bytes start with an ISO-BMFF `ftyp` box whose major brand
-/// is `avif` (still) or `avis` (AVIF sequence; sequences are then rejected
-/// by the multi-page check).
+/// True when the bytes start with an ISO-BMFF `ftyp` box that declares an
+/// AVIF brand — `avif` (still) or `avis` (sequence; sequences are then
+/// rejected by the multi-page check) — as either the major brand or one of
+/// the compatible brands. MIAF files (major brand `mif1`) commonly carry
+/// `avif` only in the compatible-brands list; HEIC files declare neither
+/// brand anywhere and stay rejected.
 fn is_avif_brand(bytes: &[u8]) -> bool {
-    bytes.len() >= 12 && &bytes[4..8] == b"ftyp" && matches!(&bytes[8..12], b"avif" | b"avis")
+    if bytes.len() < 16 || &bytes[4..8] != b"ftyp" {
+        return false;
+    }
+    let box_len = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    let end = box_len.min(bytes.len());
+    // Major brand at 8..12, minor version at 12..16, compatible brands after.
+    let is_avif = |brand: &[u8; 4]| matches!(brand, b"avif" | b"avis");
+    let major: &[u8; 4] = bytes[8..12].try_into().expect("length checked above");
+    if is_avif(major) {
+        return true;
+    }
+    let (compatible, _) = bytes[16..end].as_chunks::<4>();
+    compatible.iter().any(is_avif)
 }
 
 /// True when a WebP RIFF container has an extended (VP8X) header with the

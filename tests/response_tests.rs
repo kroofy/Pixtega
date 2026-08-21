@@ -491,11 +491,58 @@ async fn invalid_requests_are_non_cacheable_400_json_errors() {
 #[tokio::test]
 async fn non_get_methods_are_non_cacheable_405_with_allow_get() {
     let (_dir, addr) = spawn_filesystem_app().await;
-    for method in ["POST", "PUT", "DELETE"] {
+    // HEAD is an optional extension this implementation does not provide,
+    // so it must fall into the same 405 taxonomy as every non-GET method.
+    for method in ["POST", "PUT", "DELETE", "HEAD"] {
         let response = send_request(addr, method, "/images/files/photo.jpg/w320.webp").await;
         assert_eq!(response.status, 405, "method {method}");
         assert_eq!(response.header("allow"), Some("GET"), "method {method}");
         assert_no_store(&response);
-        assert_error_body(&response);
+        if method == "HEAD" {
+            // A HEAD response must not carry a body (hyper strips it), so
+            // only the headers can be asserted.
+            assert_eq!(response.header("content-type"), Some("application/json"));
+            assert!(response.body.is_empty(), "HEAD response must have no body");
+        } else {
+            assert_error_body(&response);
+        }
+    }
+}
+
+/// An HTTP/1.1 absolute-form request target carries scheme and authority in
+/// the target itself; the 8192-byte limit applies to the whole received
+/// target, not only to path + query.
+#[tokio::test]
+async fn absolute_form_targets_over_8192_bytes_are_rejected() {
+    let (_dir, addr) = spawn_filesystem_app().await;
+    let long_host = format!("{}.test", "a".repeat(8300));
+    let target = format!("http://{long_host}/images/files/photo.jpg/w320.webp");
+    let response = send_request(addr, "GET", &target).await;
+    assert_eq!(response.status, 400);
+    assert_no_store(&response);
+    assert_error_body(&response);
+
+    // A short absolute-form target for the same resource still works.
+    let target = format!(
+        "http://127.0.0.1:{}/images/files/photo.jpg/w320.webp",
+        addr.port()
+    );
+    let response = send_request(addr, "GET", &target).await;
+    assert_eq!(response.status, 200);
+}
+
+/// The public error body is JSON-encoded, so hostile characters in an
+/// internal message can never corrupt it.
+#[test]
+fn hostile_error_messages_cannot_corrupt_the_json_body() {
+    for message in [
+        "quote\" brace} newline\n nul\0 emoji🧨 backslash\\",
+        "{\"error\":\"forged\"}",
+        "\u{202e}control\u{7f}",
+    ] {
+        let body = image_service::app::error_body(message);
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be JSON");
+        assert_eq!(parsed["error"].as_str(), Some(message));
+        assert_eq!(parsed.as_object().map(|o| o.len()), Some(1));
     }
 }
