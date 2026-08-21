@@ -105,9 +105,7 @@ impl RequestError {
             RequestError::DisallowedWidth => "width not allowed",
             RequestError::UnconfiguredFormat => "format not configured",
             RequestError::DisallowedQuality => "quality not allowed",
-            RequestError::QualityEqualsDefault => {
-                "quality equals the format default; omit q"
-            }
+            RequestError::QualityEqualsDefault => "quality equals the format default; omit q",
             RequestError::InvalidQuery => "invalid query parameter",
             RequestError::InvalidVersion => "invalid version token",
         }
