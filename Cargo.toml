@@ -10,7 +10,7 @@ description = "On-demand image derivation service: fetches a source image, deriv
 async-trait = "0.1"
 axum = "0.8"
 aws-config = { version = "1", features = ["behavior-version-latest"] }
-aws-sdk-s3 = "1"
+aws-sdk-s3 = { version = "1", default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
 bytes = "1"
 futures-util = "0.3"
 libvips = "=1.6.1"
