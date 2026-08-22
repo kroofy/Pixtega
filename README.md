@@ -1,11 +1,29 @@
-# image-service
+# Pixtega
 
 An on-demand image derivation service. It fetches an image from a
 configured Source (HTTP(S), filesystem, or S3), derives a bounded variant
 (width, format, optional quality), and returns cacheable image bytes.
 
+Pixtega is the project name; the Rust crate and binary remain
+`image-service` (binary name: `image-service`).
+
 The full contract lives in [SPEC.md](SPEC.md). This README covers running
 and operating the service.
+
+## Documentation
+
+The docs site sources live in [website/](website/) (a static Cloudflare
+Workers assets site):
+
+- [Home](website/public/index.html) — what Pixtega is and why
+- [Getting started](website/public/docs/getting-started.html) — local and Docker
+- [Configuration](website/public/docs/configuration.html) — precedence, schema, limits
+- [API reference](website/public/docs/api.html) — URL grammar, caching, errors
+- [AWS Lambda](website/public/docs/aws-lambda.html) — recommended serverless path
+
+For deployment on AWS Lambda, see the step-by-step guide in
+[deploy/lambda/README.md](deploy/lambda/README.md) and the Lambda container
+image in [Dockerfile.lambda](Dockerfile.lambda).
 
 ## Quick start (bundled fixtures, no network)
 
@@ -166,6 +184,13 @@ docker run --rm -p 8080:8080 \
   image-service /config/config.toml
 ```
 
+### AWS Lambda
+
+[Dockerfile.lambda](Dockerfile.lambda) builds the same image with the AWS
+Lambda Web Adapter extension, configured inline via the `CONFIG`
+environment variable. The full walkthrough (ECR, IAM, Function URL, curl
+smoke test) is in [deploy/lambda/README.md](deploy/lambda/README.md).
+
 ## Observability
 
 One structured JSON completion event per request on stdout, with status, a
@@ -177,6 +202,8 @@ milliseconds. Response bodies, credentials, and `v` values are never
 logged.
 
 ## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build setup and PR expectations.
 
 ```bash
 ./scripts/check.sh   # formatting, clippy, unit + integration tests
