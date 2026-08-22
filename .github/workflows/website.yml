@@ -1,0 +1,49 @@
+# Deploy the docs/homepage Worker (website/) to Cloudflare.
+#
+# On push to main when website/** or this file changes — so copy PRs
+# deploy, and workflow edits can be verified on merge. workflow_dispatch
+# is a manual redeploy from the Actions tab.
+#
+# Wrangler 4 is current stable (4.125.x as of 2026-08-20). Pinned as
+# wrangler@4 so CI tracks latest 4.x without jumping majors.
+# Auth: Wrangler reads CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
+# from the environment
+# (https://developers.cloudflare.com/workers/wrangler/system-environment-variables/).
+# Add both as repo secrets before the first green deploy. Token needs
+# Edit Cloudflare Workers (Workers Scripts:Edit).
+#
+# Custom domain pixtega.com is already attached to Worker `pixtega`
+# in Cloudflare; this job only updates the Worker.
+
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - ".github/workflows/website.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: deploy to Cloudflare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js LTS
+        uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+
+      - name: wrangler deploy
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@4 deploy
