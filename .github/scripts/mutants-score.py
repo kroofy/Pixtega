@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Score a cargo-mutants run against the SPEC.md >= 90% threshold.
+"""Score a cargo-mutants run against the project >= 90% threshold.
 
 Reads the mutants.out/ directory that `cargo mutants` writes next to the
 workspace root, computes
@@ -104,7 +104,7 @@ def main() -> int:
 
     if not passed:
         print(
-            f"error: mutation score {score:.2f}% is below the SPEC.md "
+            f"error: mutation score {score:.2f}% is below the project "
             f"threshold of {THRESHOLD_PERCENT:.0f}%; see mutants.out/missed.txt",
             file=sys.stderr,
         )
