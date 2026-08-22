@@ -1,0 +1,72 @@
+# Fast correctness gate for every PR and every push to main.
+#
+# Two jobs:
+#   check     - exactly ./scripts/check.sh (fmt --check, clippy -D warnings,
+#               unit + integration tests) on the toolchain pinned by
+#               rust-toolchain.toml.
+#   container - exactly ./scripts/container-acceptance.sh (Docker build of
+#               the repository Dockerfile + a curl smoke test against the
+#               running image).
+#
+# Mutation testing is intentionally NOT here: a full cargo-mutants run takes
+# hours and lives in .github/workflows/mutants.yml (cron + manual dispatch).
+#
+# ubuntu-24.04 is pinned (not ubuntu-latest) because its libvips 8.15
+# matches the pinned libvips Rust bindings (=1.6.1) and its libheif ships
+# the aom AV1 encoder plugin needed for AVIF output — the same reasoning as
+# the Dockerfile base image.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: fmt + clippy + tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install libvips and AVIF encoder plugins
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libheif-plugin-aomdec \
+            libheif-plugin-aomenc \
+            libvips-dev \
+            pkg-config
+
+      # rustup reads rust-toolchain.toml and installs the pinned toolchain
+      # with its pinned components (rustfmt, clippy). Same pattern as the
+      # Dockerfile, so CI can never drift from the pin.
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: check.sh (fmt, clippy, tests)
+        run: ./scripts/check.sh
+
+  container:
+    name: container acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # Full acceptance script: docker build + run + curl smoke asserting a
+      # 200 image/webp WebP body. GitHub-hosted runners include Docker.
+      - name: container-acceptance.sh
+        run: ./scripts/container-acceptance.sh

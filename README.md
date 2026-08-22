@@ -1,5 +1,8 @@
 # Pixtega
 
+[![CI](https://github.com/kroofy/Pixtega/actions/workflows/ci.yml/badge.svg)](https://github.com/kroofy/Pixtega/actions/workflows/ci.yml)
+[![Mutants](https://github.com/kroofy/Pixtega/actions/workflows/mutants.yml/badge.svg)](https://github.com/kroofy/Pixtega/actions/workflows/mutants.yml)
+
 An on-demand image derivation service. It fetches an image from a
 configured Source (HTTP(S), filesystem, or S3), derives a bounded variant
 (width, format, optional quality), and returns cacheable image bytes.
@@ -222,6 +225,25 @@ cargo mutants
 Configuration and exclusions (with reasons) live in
 [.cargo/mutants.toml](.cargo/mutants.toml); the semantic-mutant manifest is
 in [docs/semantic-mutants.md](docs/semantic-mutants.md).
+
+## CI, mutation score, and releases
+
+Full details in [docs/ci.md](docs/ci.md).
+
+- **CI** runs `./scripts/check.sh` and
+  `./scripts/container-acceptance.sh` on every PR and push to `main`.
+- **Mutation score**: SPEC.md requires ≥ 90%. The Mutants workflow
+  (weekly on `main` + manual dispatch) runs the full `cargo mutants`
+  suite, publishes the score in the run's job summary and a
+  `mutants-report` artifact (`mutants-score.json` + the full
+  `mutants.out/` report), and fails below 90%. Latest recorded score:
+  the most recent [Mutants run](https://github.com/kroofy/Pixtega/actions/workflows/mutants.yml)
+  (badge above).
+- **Releases**: `git tag vX.Y.Z && git push origin vX.Y.Z` builds and
+  pushes `ghcr.io/kroofy/pixtega` images (`X.Y.Z`, `X.Y`, `latest`, and
+  the `-lambda` variant from [Dockerfile.lambda](Dockerfile.lambda)) and
+  creates a GitHub Release with the binary tarball and SHA256 checksums
+  attached.
 
 ## License
 

@@ -1,0 +1,185 @@
+# Release pipeline. Cutting a release:
+#
+#   git tag vX.Y.Z && git push origin vX.Y.Z
+#
+# On a v* tag this workflow:
+#   1. builds and pushes OCI images to ghcr.io/kroofy/pixtega
+#        - Dockerfile        -> X.Y.Z, X.Y, latest
+#        - Dockerfile.lambda -> X.Y.Z-lambda, lambda
+#   2. builds the release binary (dynamically linked against Ubuntu 24.04
+#      libvips; the container image is the recommended distribution),
+#      packages it as a tarball with SHA256SUMS,
+#   3. creates a GitHub Release with auto-generated notes (no CHANGELOG in
+#      this repo) and the tarball + checksums attached.
+#
+# workflow_dispatch is a rehearsal: it builds everything but pushes no
+# images and creates no release.
+#
+# Permissions and secrets: only the built-in GITHUB_TOKEN is used.
+#   - packages: write  (push to GHCR; the package inherits repo visibility,
+#     so images on a private repo stay private)
+#   - contents: write  (create the GitHub Release)
+# No extra repository secrets are required.
+#
+# Images are linux/amd64 only: cross-building the Rust + libvips stack for
+# arm64 under QEMU multiplies build time for no current consumer. Revisit
+# with native arm64 runners if needed.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/kroofy/pixtega
+
+jobs:
+  binary:
+    name: release binary + checksums
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install libvips and AVIF encoder plugins
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libheif-plugin-aomdec \
+            libheif-plugin-aomenc \
+            libvips-dev \
+            pkg-config
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package tarball and checksums
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" != "push" ]; then VERSION="rehearsal"; fi
+          NAME="pixtega-${VERSION}-x86_64-unknown-linux-gnu-ubuntu24.04"
+          mkdir -p "dist/${NAME}"
+          cp target/release/pixtega LICENSE README.md THIRD_PARTY_NOTICES.md \
+            config.example.toml "dist/${NAME}/"
+          tar -C dist -czf "dist/${NAME}.tar.gz" "${NAME}"
+          (cd dist && sha256sum "${NAME}.tar.gz" > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-binary
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  image:
+    name: OCI images to GHCR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata (service)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          # latest is added automatically on semver tags (flavor latest=auto).
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=rehearsal,enable=${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Image metadata (lambda)
+        id: meta-lambda
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},suffix=-lambda
+            type=raw,value=lambda,enable=${{ github.event_name == 'push' }}
+            type=raw,value=rehearsal-lambda,enable=${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Build and push service image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Build and push lambda image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.lambda
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta-lambda.outputs.tags }}
+          labels: ${{ steps.meta-lambda.outputs.labels }}
+
+  release:
+    name: GitHub Release
+    needs: [binary, image]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-binary
+          path: dist
+
+      # Image tags drop the leading v: tag v1.2.3 -> image 1.2.3.
+      - name: Derive image version from the git tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            Container images (linux/amd64):
+
+            - `ghcr.io/kroofy/pixtega:${{ env.VERSION }}` (also `latest`)
+            - `ghcr.io/kroofy/pixtega:${{ env.VERSION }}-lambda` (also `lambda`) — AWS Lambda Web Adapter baked in
+
+            The attached binary is dynamically linked against Ubuntu 24.04
+            libvips (`libvips42t64` + `libheif-plugin-aomenc`); the container
+            image is the recommended distribution. Verify downloads with
+            `sha256sum -c SHA256SUMS`.
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
