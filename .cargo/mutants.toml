@@ -1,0 +1,15 @@
+# cargo-mutants configuration.
+#
+# Run with:  cargo mutants
+# (see docs/mutation-testing.md for the full procedure)
+#
+# Exclusions, with reasons as required by SPEC.md:
+# - src/main.rs: process bootstrap only (argument/env plumbing and exit
+#   codes); it contains no policy and is exercised by the end-to-end tests
+#   that spawn the real binary rather than by unit assertions.
+exclude_globs = ["src/main.rs"]
+
+# Integration tests spawn fixture servers and encode images; give mutants a
+# generous but bounded timeout so hangs are killed.
+timeout_multiplier = 3.0
+minimum_test_timeout = 120.0
