@@ -1,5 +1,5 @@
-# Authoritative mutation score for the SPEC.md requirement of a >= 90%
-# mutation score (SPEC.md, "Test design and mutation resilience").
+# Authoritative mutation score for the project requirement of a >= 90%
+# mutation score (see README, "CI, mutation score, and releases").
 #
 # A full cargo-mutants run rebuilds and retests the crate once per mutant
 # and can take hours, so it does NOT gate pull requests (see ci.yml for the
@@ -77,7 +77,7 @@ jobs:
                exit "$code" ;;
           esac
 
-      - name: Score against the SPEC threshold (>= 90%)
+      - name: Score against the 90% threshold
         run: python3 .github/scripts/mutants-score.py
 
       - name: Upload mutants report and score

@@ -23,8 +23,8 @@ reasoning as the Dockerfile base image.
 
 ## Mutation score (`.github/workflows/mutants.yml`)
 
-SPEC.md ("Test design and mutation resilience") requires a mutation score
-of at least 90%. A full `cargo mutants` run rebuilds and retests the crate
+The project requires a mutation score of at least 90% (see the README).
+A full `cargo mutants` run rebuilds and retests the crate
 once per mutant and can take hours, so it does not gate pull requests.
 Instead it runs weekly on `main` and on demand (Actions tab → Mutants →
 Run workflow), using the checked-in
