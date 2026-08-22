@@ -4,7 +4,7 @@
 //! bytes or a typed [`ProcessError`]. Knows nothing about HTTP, Sources, or
 //! configuration allowlists.
 //!
-//! Pipeline (SPEC.md "Image processing"):
+//! Pipeline:
 //!
 //! 1. Identify the loader libvips would pick for the bytes
 //!    (`vips_foreign_find_load_buffer`) and whitelist the JPEG, PNG, WebP,

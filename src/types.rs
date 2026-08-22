@@ -1,15 +1,15 @@
 //! Shared domain types used across request parsing, source adapters, image
 //! processing, and the HTTP application.
 //!
-//! Terminology follows SPEC.md: Source, Transport, Mount, Key Prefix,
-//! Source Object, Transform, Derived Image, Width Allowlist.
+//! Project terminology: Source, Transport, Mount, Key Prefix, Source
+//! Object, Transform, Derived Image, Width Allowlist.
 
 use std::fmt;
 
 /// Output encoding formats the service can produce.
 ///
-/// Exactly the closed set from the specification. Aliases such as `jpg`
-/// are intentionally not representable.
+/// A closed set. Aliases such as `jpg` are intentionally not
+/// representable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum OutputFormat {
     Webp,

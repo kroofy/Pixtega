@@ -1,6 +1,7 @@
 //! On-demand image derivation service.
 //!
-//! See SPEC.md for the full contract. Module shape:
+//! The behavioral contract (URL grammar, caching, error taxonomy) is
+//! documented in the README and enforced by the test suite. Module shape:
 //!
 //! ```text
 //! HTTP request

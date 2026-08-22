@@ -1,4 +1,4 @@
-//! Public request and policy tests (SPEC.md "Request and policy tests").
+//! Public request and policy tests.
 //!
 //! `parse_request` is a pure function: every Source in these configs points
 //! at a nonexistent filesystem root, so any Source I/O during parsing would

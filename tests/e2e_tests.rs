@@ -1,12 +1,13 @@
-//! End-to-end acceptance tests (SPEC.md "End-to-end acceptance").
+//! End-to-end acceptance tests.
 //!
 //! Every test spawns the REAL service binary (`CARGO_BIN_EXE_pixtega`)
 //! as a child process with its own tempdir-written TOML configuration, plus
 //! local fixture servers on 127.0.0.1. The service listens on an ephemeral
 //! port announced by its `{"event":"listening",...}` startup line.
 //!
-//! Covered acceptance items: 1-10 and 12-15. Item 11 (the container) lives
-//! in `scripts/container-acceptance.sh` because it needs Docker.
+//! Tests are grouped into numbered acceptance items (the `Item N` comments
+//! below). Item 11 (the container image) lives in
+//! `scripts/container-acceptance.sh` because it needs Docker.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Cursor};

@@ -1,7 +1,6 @@
 //! Behavior tests for configuration loading and validation.
 //!
-//! Covers SPEC.md "Configuration" and the "Configuration tests" bullets in
-//! "Public test suite". Every test drives the public `load_from_str` /
+//! Every test drives the public `load_from_str` /
 //! `load_from_file` interface and asserts only on Ok/Err plus loose message
 //! substrings (the offending field or mount name).
 

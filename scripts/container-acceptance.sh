@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# End-to-end acceptance item 11: the container image starts from the
+# End-to-end acceptance item 11 (numbering follows tests/e2e_tests.rs):
+# the container image starts from the
 # baked-in example configuration and passes the fixtures-mount success case.
 #
 # Builds the OCI image from the repository Dockerfile, runs it on an
