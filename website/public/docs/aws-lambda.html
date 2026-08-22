@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deploy on AWS Lambda — Pixtega</title>
+  <meta name="description" content="Deploy Pixtega as a Lambda container image with the AWS Lambda Web Adapter and a Function URL.">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="site">
+  <div class="inner">
+    <a class="brand" href="/">Pixtega</a>
+    <nav>
+      <a href="/docs/getting-started.html">Getting started</a>
+      <a href="/docs/configuration.html">Configuration</a>
+      <a href="/docs/api.html">API</a>
+      <a href="/docs/aws-lambda.html" aria-current="page">AWS Lambda</a>
+      <a href="https://github.com/kroofy/Pixtega">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <h1>Deploy on AWS Lambda</h1>
+  <p class="lead">
+    The recommended serverless path: a Lambda container image built from
+    <code>Dockerfile.lambda</code>, fronted by a Function URL. The image is
+    the standard container plus the AWS Lambda Web Adapter extension, which
+    translates Lambda invocations into plain HTTP — the binary contains no
+    Lambda-specific code and the same image runs on ECS, EC2, or locally.
+  </p>
+
+  <h2>How it fits together</h2>
+  <ul>
+    <li>
+      <strong><code>Dockerfile.lambda</code></strong> adds the
+      <a href="https://github.com/aws/aws-lambda-web-adapter">Lambda Web Adapter</a>
+      as a Lambda extension and clears the default command, so configuration
+      comes from the environment instead of a baked-in file.
+    </li>
+    <li>
+      <strong>Inline configuration.</strong> The service reads its full TOML
+      configuration from the <code>CONFIG</code> environment variable when no
+      file is given (see <a href="/docs/configuration.html">Configuration</a>),
+      so config changes are a Lambda environment update, never an image
+      rebuild. Keep <code>listen_address = "0.0.0.0:8080"</code> — the
+      adapter forwards to port 8080 by default.
+    </li>
+    <li>
+      <strong>TCP readiness.</strong> The image sets
+      <code>AWS_LWA_READINESS_CHECK_PROTOCOL=tcp</code> because the service
+      has no HTTP health endpoint (<code>GET /</code> is a 400 by design);
+      the adapter waits for the TCP socket instead of an HTTP 200.
+    </li>
+    <li>
+      <strong>S3 sources use the execution role.</strong> Credentials are
+      never read from TOML; grant the function's role
+      <code>s3:GetObject</code> on the configured prefix (and ideally
+      <code>s3:ListBucket</code> so missing keys become cacheable 404s
+      instead of 502s).
+    </li>
+  </ul>
+
+  <h2>Deployment outline</h2>
+  <pre><code># 1. Build the Lambda image
+docker build -f Dockerfile.lambda --platform linux/amd64 -t pixtega-lambda .
+
+# 2. Push to ECR
+docker tag pixtega-lambda "$ECR_REPO:latest"
+docker push "$ECR_REPO:latest"
+
+# 3. Create the function with inline TOML configuration
+aws lambda create-function \
+  --function-name pixtega \
+  --package-type Image \
+  --code ImageUri="$ECR_REPO:latest" \
+  --role "$ROLE_ARN" \
+  --memory-size 1024 --timeout 30 \
+  --environment "Variables={CONFIG=$(cat deploy/lambda/example-config.toml)}"
+
+# 4. Expose a Function URL and test
+aws lambda create-function-url-config --function-name pixtega --auth-type NONE
+curl -o out.webp "${FUNCTION_URL}images/fixtures/photos/example.jpg/w640.webp"</code></pre>
+  <p>
+    The complete walkthrough — ECR login, IAM policies, permissions for the
+    public URL, and the smoke test — lives in the repository at
+    <a href="https://github.com/kroofy/Pixtega/blob/main/deploy/lambda/README.md">deploy/lambda/README.md</a>,
+    with a ready-made
+    <a href="https://github.com/kroofy/Pixtega/blob/main/deploy/lambda/example-config.toml">example-config.toml</a>.
+  </p>
+
+  <h2>Caveats</h2>
+  <ul>
+    <li>
+      <strong>6 MB response limit.</strong> Buffered Function URL responses
+      are capped at about 6 MB. Derived images are usually far smaller, but
+      you can enable response streaming
+      (<code>--invoke-mode RESPONSE_STREAM</code> plus
+      <code>AWS_LWA_INVOKE_MODE=response_stream</code>) to raise the limit,
+      or constrain <code>allowed_widths</code> and
+      <code>allowed_qualities</code> so oversized outputs cannot be
+      produced.
+    </li>
+    <li>
+      <strong>Cold starts.</strong> Each new execution environment loads
+      libvips, validates configuration, and verifies every enabled encoder,
+      so the first request is noticeably slower than warm ones. A CDN in
+      front absorbs most of this — the service's
+      <a href="/docs/api.html">cache policy</a> is designed for exactly
+      that.
+    </li>
+    <li>
+      <strong>Environment size.</strong> Lambda caps the function
+      environment at 4 KB total. If your TOML does not fit in
+      <code>CONFIG</code>, bake a config file into the image and point
+      <code>CONFIG_FILE</code> at it.
+    </li>
+  </ul>
+
+  <div class="callout">
+    Prefer a plain container platform? The standard <code>Dockerfile</code>
+    image works unchanged on ECS, Fargate, or any Docker host — see
+    <a href="/docs/getting-started.html">Getting started</a>.
+  </div>
+</main>
+
+<footer class="site">
+  <div class="inner">
+    Pixtega is dual-licensed under MIT OR Apache-2.0 ·
+    <a href="https://github.com/kroofy/Pixtega">github.com/kroofy/Pixtega</a>
+  </div>
+</footer>
+</body>
+</html>

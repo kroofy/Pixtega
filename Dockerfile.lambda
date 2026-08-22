@@ -1,0 +1,72 @@
+# AWS Lambda container image: the standard image (see Dockerfile) plus the
+# AWS Lambda Web Adapter extension, which translates Lambda invocations
+# (Function URL, API Gateway, ALB) into plain HTTP against the service.
+# The same image still runs anywhere a normal container runs.
+#
+# Differences from Dockerfile:
+#   - The Lambda Web Adapter binary is copied into /opt/extensions.
+#   - CMD is cleared: with no CLI argument, the service falls back to the
+#     CONFIG_FILE and then CONFIG environment variables, so the full TOML
+#     configuration can be supplied inline through the Lambda function's
+#     CONFIG environment variable without rebuilding the image.
+#   - AWS_LWA_READINESS_CHECK_PROTOCOL=tcp: the service has no HTTP health
+#     endpoint (GET / is a 400 by design), so the adapter waits for the
+#     TCP socket instead of an HTTP 200.
+#
+# The service must listen on the port the adapter forwards to (default
+# 8080), so configure: listen_address = "0.0.0.0:8080".
+#
+# See deploy/lambda/README.md for the full deployment walkthrough.
+
+FROM ubuntu:24.04 AS build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        libheif-plugin-aomdec \
+        libheif-plugin-aomenc \
+        libvips-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain none
+
+WORKDIR /app
+COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
+# rustup installs the toolchain pinned by rust-toolchain.toml on first use.
+RUN rustup show active-toolchain || rustup toolchain install
+
+COPY src ./src
+RUN cargo build --release --locked
+
+FROM ubuntu:24.04
+
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.0.1 \
+    /lambda-adapter /opt/extensions/lambda-adapter
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libheif-plugin-aomdec \
+        libheif-plugin-aomenc \
+        libvips42t64 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --create-home --shell /usr/sbin/nologin imageservice
+
+WORKDIR /app
+COPY --from=build /app/target/release/image-service /usr/local/bin/image-service
+COPY fixtures ./fixtures
+
+USER imageservice
+EXPOSE 8080
+# The adapter forwards to 127.0.0.1:8080 by default (AWS_LWA_PORT); the
+# TCP readiness check avoids requiring an HTTP health endpoint.
+ENV AWS_LWA_READINESS_CHECK_PROTOCOL=tcp
+
+ENTRYPOINT ["/usr/local/bin/image-service"]
+# No default config: supply one via the CONFIG (inline TOML) or CONFIG_FILE
+# environment variable, or pass a path as the container command.
+CMD []

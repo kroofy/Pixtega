@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Configuration — Pixtega</title>
+  <meta name="description" content="Pixtega configuration: TOML schema, precedence between CLI path, CONFIG_FILE, and inline CONFIG, and every limit with its allowed range.">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="site">
+  <div class="inner">
+    <a class="brand" href="/">Pixtega</a>
+    <nav>
+      <a href="/docs/getting-started.html">Getting started</a>
+      <a href="/docs/configuration.html" aria-current="page">Configuration</a>
+      <a href="/docs/api.html">API</a>
+      <a href="/docs/aws-lambda.html">AWS Lambda</a>
+      <a href="https://github.com/kroofy/Pixtega">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <h1>Configuration</h1>
+  <p class="lead">
+    Pixtega is configured with a single TOML document. The schema is closed:
+    an unknown field stops startup, as does any invalid value. There are no
+    silent defaults for limits — what you configure is what runs.
+  </p>
+
+  <h2>Where configuration comes from</h2>
+  <p>The service checks three places, in this order, and uses the first match:</p>
+  <ol>
+    <li><strong>CLI argument</strong> — a TOML file path passed as the first argument: <code>image-service /path/to/config.toml</code></li>
+    <li><strong><code>CONFIG_FILE</code></strong> — an environment variable holding a TOML file path.</li>
+    <li><strong><code>CONFIG</code></strong> — an environment variable holding the full TOML document inline. Useful where mounting files is awkward, such as <a href="/docs/aws-lambda.html">AWS Lambda</a>.</li>
+  </ol>
+  <p>
+    If none is provided, startup fails with
+    <code>no configuration: pass a TOML path, or set CONFIG_FILE or CONFIG</code>.
+    Relative paths inside a config file (filesystem roots, CA certificate
+    files) resolve against the file's directory; with inline
+    <code>CONFIG</code>, they resolve against the process working directory.
+  </p>
+
+  <h2>Annotated overview</h2>
+  <p>
+    This mirrors
+    <a href="https://github.com/kroofy/Pixtega/blob/main/config.example.toml"><code>config.example.toml</code></a>
+    from the repository.
+  </p>
+  <pre><code># Where to listen.
+listen_address = "0.0.0.0:8080"
+# URL prefix for the image contract; requests outside it are rejected.
+path_prefix = "/images"
+
+# The closed Width Allowlist. Callers may only request these widths.
+allowed_widths = [320, 640, 1280, 1920]
+
+# Source size cap (bytes), enforced on the advertised length and again
+# while streaming.
+max_download_bytes = 52428800
+# Decode-bomb guard, checked from header metadata before decoding.
+max_source_megapixels = 100
+# One timeout over the whole source exchange.
+download_timeout_ms = 10000
+# HTTP(S) redirect bound (same origin, same base path only).
+max_redirects = 3
+# Process-wide fetch+process permits.
+max_concurrent_derivations = 8
+# Cache lifetime of 200 responses without a `v` token.
+unversioned_success_ttl_seconds = 3600
+# Cache lifetime of 404 responses.
+not_found_ttl_seconds = 60
+
+# One block per enabled output format. `default_quality` is required.
+# An empty or absent `allowed_qualities` means callers cannot pass `q`
+# for that format at all.
+[formats.webp]
+default_quality = 82
+allowed_qualities = [60, 72, 90]
+
+[formats.avif]
+default_quality = 55
+allowed_qualities = [40, 65]
+
+[formats.jpeg]
+default_quality = 85
+allowed_qualities = [70, 92]
+
+# Each source maps a mount name to a backend. Callers can never supply
+# a hostname, bucket, directory, or transport — only the mount.
+[[sources]]
+mount = "public"          # [a-z][a-z0-9-]{0,31}, unique
+key_prefix = "media"      # omitted => defaults to the mount; "" => none
+transport = "http"        # or "filesystem" or "s3"
+base_url = "https://images.example.test"
+
+[[sources]]
+mount = "fixtures"
+key_prefix = ""
+transport = "filesystem"
+root = "./fixtures"       # resolved relative to the config file
+
+[[sources]]
+mount = "archive"
+key_prefix = "originals"
+transport = "s3"
+bucket = "example-image-bucket"
+region = "us-east-1"</code></pre>
+
+  <h2>Limits and allowed ranges</h2>
+  <table>
+    <thead>
+      <tr><th>Field</th><th>Range</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>allowed_widths</code></td><td>each in 1..=16384</td><td>the closed Width Allowlist</td></tr>
+      <tr><td><code>max_download_bytes</code></td><td>1..=104857600</td><td>source size cap, enforced on the advertised length and again while streaming</td></tr>
+      <tr><td><code>max_source_megapixels</code></td><td>1..=500</td><td>decode-bomb guard, checked from header metadata before decoding</td></tr>
+      <tr><td><code>download_timeout_ms</code></td><td>1..=60000</td><td>one timeout over the whole source exchange</td></tr>
+      <tr><td><code>max_redirects</code></td><td>0..=10</td><td>HTTP(S) redirect bound (same origin, same base path only)</td></tr>
+      <tr><td><code>max_concurrent_derivations</code></td><td>1..=64</td><td>process-wide fetch+process permits</td></tr>
+      <tr><td><code>unversioned_success_ttl_seconds</code></td><td>1..=86400</td><td>cache lifetime without <code>v</code></td></tr>
+      <tr><td><code>not_found_ttl_seconds</code></td><td>1..=3600</td><td>cache lifetime of 404s</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Source transports</h2>
+  <h3>http</h3>
+  <p>
+    Requires <code>base_url</code> (http or https). An optional
+    <code>ca_certificate_file</code> (PEM, HTTPS only, resolved relative to
+    the config file) supports local fixture servers; hostname verification
+    always stays on. Use HTTPS outside loopback and trusted private
+    networks.
+  </p>
+
+  <h3>filesystem</h3>
+  <p>
+    Requires <code>root</code>, resolved relative to the config file and
+    canonicalized at startup. Symlinks below the root are always rejected.
+  </p>
+
+  <h3>s3</h3>
+  <p>
+    Requires <code>bucket</code> and <code>region</code>; optional
+    <code>endpoint_url</code> and <code>force_path_style</code> support local
+    S3-compatible servers.
+  </p>
+
+  <h2>S3 credentials and permissions</h2>
+  <p>
+    Credentials are never read from TOML. The adapter uses the standard AWS
+    SDK credential provider chain: environment variables
+    (<code>AWS_ACCESS_KEY_ID</code>/<code>AWS_SECRET_ACCESS_KEY</code>),
+    shared config/credentials files and profiles, and instance/task roles.
+  </p>
+  <p>
+    The service needs <code>s3:GetObject</code> on the configured prefix.
+    With <code>GetObject</code> permission alone, S3 answers a missing key
+    with 403 instead of 404 unless the principal also has
+    <code>s3:ListBucket</code>; without list permission every missing object
+    is reported (correctly, per the
+    <a href="/docs/api.html">error taxonomy</a>) as 502 source-unavailable
+    rather than 404. Grant <code>s3:ListBucket</code> on the bucket if you
+    want missing keys to become cacheable 404s.
+  </p>
+
+  <div class="callout">
+    Every validation rule is specified in
+    <a href="https://github.com/kroofy/Pixtega/blob/main/SPEC.md">SPEC.md</a>.
+    When in doubt, the spec and the startup error messages are authoritative.
+  </div>
+</main>
+
+<footer class="site">
+  <div class="inner">
+    Pixtega is dual-licensed under MIT OR Apache-2.0 ·
+    <a href="https://github.com/kroofy/Pixtega">github.com/kroofy/Pixtega</a>
+  </div>
+</footer>
+</body>
+</html>

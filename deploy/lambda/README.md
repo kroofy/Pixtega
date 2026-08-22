@@ -1,0 +1,184 @@
+# Deploying Pixtega on AWS Lambda
+
+This guide deploys the service as a Lambda container image behind a
+[Function URL](https://docs.aws.amazon.com/lambda/latest/dg/lambda-urls.html).
+The image is built from [`Dockerfile.lambda`](../../Dockerfile.lambda), which
+is the standard image plus the
+[AWS Lambda Web Adapter](https://github.com/aws/aws-lambda-web-adapter)
+extension. The adapter translates Lambda invocations into plain HTTP against
+the service, so no Lambda-specific code exists in the binary — the same image
+also runs on ECS, EC2, or your laptop.
+
+Configuration is supplied inline through the `CONFIG` environment variable
+(the full TOML document), so changing configuration never requires an image
+rebuild. See [`example-config.toml`](example-config.toml) for a starting
+point that serves the bundled fixtures and shows an S3 source.
+
+## Prerequisites
+
+- AWS CLI v2, authenticated with permissions for ECR, Lambda, and IAM
+- Docker (build for the architecture you will run: `linux/amd64` below;
+  use `--platform linux/arm64` and `--architectures arm64` consistently
+  if you prefer Graviton)
+
+## 1. Build the image
+
+From the repository root:
+
+```bash
+docker build -f Dockerfile.lambda --platform linux/amd64 -t pixtega-lambda .
+```
+
+## 2. Push to ECR
+
+```bash
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+AWS_REGION=us-east-1
+ECR_REPO="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/pixtega"
+
+aws ecr create-repository --repository-name pixtega --region "$AWS_REGION"
+aws ecr get-login-password --region "$AWS_REGION" \
+  | docker login --username AWS --password-stdin \
+      "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+docker tag pixtega-lambda "${ECR_REPO}:latest"
+docker push "${ECR_REPO}:latest"
+```
+
+## 3. Create the execution role
+
+```bash
+aws iam create-role --role-name pixtega-lambda \
+  --assume-role-policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Principal": {"Service": "lambda.amazonaws.com"},
+      "Action": "sts:AssumeRole"
+    }]
+  }'
+aws iam attach-role-policy --role-name pixtega-lambda \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+```
+
+### IAM for S3 sources
+
+If your configuration has `transport = "s3"` sources, the execution role is
+the credential (the service uses the standard AWS SDK provider chain;
+credentials are never read from TOML). Grant it `s3:GetObject` on the
+configured prefix:
+
+```bash
+aws iam put-role-policy --role-name pixtega-lambda \
+  --policy-name pixtega-s3-read \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": "s3:GetObject",
+        "Resource": "arn:aws:s3:::example-image-bucket/originals/*"
+      },
+      {
+        "Effect": "Allow",
+        "Action": "s3:ListBucket",
+        "Resource": "arn:aws:s3:::example-image-bucket"
+      }
+    ]
+  }'
+```
+
+The `s3:ListBucket` statement is optional but recommended: with `GetObject`
+alone, S3 answers a missing key with 403 instead of 404, so every missing
+object is reported (correctly, per the error taxonomy) as 502
+source-unavailable rather than a cacheable 404.
+
+## 4. Create the function
+
+The `CONFIG` value is the entire TOML configuration document. Keep the
+listen address on port 8080 — the Lambda Web Adapter forwards to
+`127.0.0.1:8080` by default.
+
+```bash
+CONFIG_TOML=$(cat deploy/lambda/example-config.toml)
+
+aws lambda create-function \
+  --function-name pixtega \
+  --package-type Image \
+  --code ImageUri="${ECR_REPO}:latest" \
+  --role "arn:aws:iam::${AWS_ACCOUNT_ID}:role/pixtega-lambda" \
+  --architectures x86_64 \
+  --memory-size 1024 \
+  --timeout 30 \
+  --environment "Variables={CONFIG=${CONFIG_TOML}}" \
+  --region "$AWS_REGION"
+```
+
+Notes:
+
+- `Dockerfile.lambda` already sets `AWS_LWA_READINESS_CHECK_PROTOCOL=tcp`
+  in the image, because the service has no HTTP health endpoint (`GET /`
+  is a 400 by design) — the adapter waits for the TCP socket instead of an
+  HTTP 200. If you override the image environment, keep that variable.
+- Lambda CPU scales with memory. Image decode/resize/encode is CPU-bound;
+  1024 MB is a reasonable floor, and larger widths or AVIF output benefit
+  from more.
+- The function environment has a 4 KB total size limit. If your TOML does
+  not fit, bake a config file into the image and set `CONFIG_FILE` to its
+  path instead.
+- Configuration changes are just
+  `aws lambda update-function-configuration --function-name pixtega --environment ...`.
+
+## 5. Create a Function URL
+
+```bash
+aws lambda create-function-url-config \
+  --function-name pixtega \
+  --auth-type NONE \
+  --region "$AWS_REGION"
+
+aws lambda add-permission \
+  --function-name pixtega \
+  --action lambda:InvokeFunctionUrl \
+  --principal '*' \
+  --function-url-auth-type NONE \
+  --statement-id public-url \
+  --region "$AWS_REGION"
+```
+
+`--auth-type NONE` makes the URL public. Put a CDN (e.g. CloudFront) in
+front for production — the service's `Cache-Control` policy is designed
+for exactly that.
+
+## 6. Smoke test
+
+```bash
+FUNCTION_URL=$(aws lambda get-function-url-config \
+  --function-name pixtega --query FunctionUrl --output text --region "$AWS_REGION")
+
+curl -o out.webp "${FUNCTION_URL}images/fixtures/photos/example.jpg/w640.webp"
+file out.webp   # RIFF ... Web/P image
+```
+
+The example config's `fixtures` mount serves images bundled in the image at
+`/app/fixtures`, so this works before any S3 setup. Then request through an
+S3 mount, e.g. `${FUNCTION_URL}images/photos/cat.jpg/w1280.webp?v=1`.
+
+## Caveats
+
+- **Function URL payload limit.** Buffered Function URL responses are
+  capped at about 6 MB. Derived images are usually far smaller, but large
+  widths at high JPEG qualities can exceed it. Options: enable response
+  streaming (`--invoke-mode RESPONSE_STREAM` on the Function URL and
+  `AWS_LWA_INVOKE_MODE=response_stream` in the function environment), which
+  raises the response limit substantially, or constrain `allowed_widths`
+  and `allowed_qualities` so oversized outputs cannot be produced.
+- **Cold starts.** Each cold start loads libvips and validates
+  configuration, including verifying every enabled encoder; the first
+  request on a new execution environment is noticeably slower than warm
+  requests. Use provisioned concurrency if tail latency matters, and put a
+  CDN in front so most traffic never reaches the function at all.
+- **`max_concurrent_derivations` is per instance.** Lambda sends one
+  request at a time to each execution environment (unless you have opted
+  into multi-concurrency features), so this limit rarely binds there; it
+  still protects you when running the same image on ECS/EC2.

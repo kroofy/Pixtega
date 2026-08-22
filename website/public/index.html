@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pixtega — on-demand image derivation service</title>
+  <meta name="description" content="Pixtega fetches a source image from HTTP(S), the filesystem, or S3, derives a bounded variant, and returns cacheable image bytes. One URL per derived image.">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="site">
+  <div class="inner">
+    <a class="brand" href="/">Pixtega</a>
+    <nav>
+      <a href="/docs/getting-started.html">Getting started</a>
+      <a href="/docs/configuration.html">Configuration</a>
+      <a href="/docs/api.html">API</a>
+      <a href="/docs/aws-lambda.html">AWS Lambda</a>
+      <a href="https://github.com/kroofy/Pixtega">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <h1>Derive images on demand. Cache them forever.</h1>
+  <p class="lead">
+    Pixtega is an open-source image derivation service written in Rust. It
+    fetches a source image from a configured backend — HTTP(S), the local
+    filesystem, or S3 — resizes and re-encodes it to a bounded variant, and
+    returns cacheable image bytes. Every derived image has exactly one URL.
+  </p>
+
+  <div class="buttons">
+    <a class="primary" href="/docs/getting-started.html">Get started</a>
+    <a class="secondary" href="https://github.com/kroofy/Pixtega">View on GitHub</a>
+  </div>
+
+  <h2>One URL, one derived image</h2>
+  <pre><code>GET /images/public/photos/example.jpg/w1280.webp?v=7d91c2</code></pre>
+  <p>
+    The mount (<code>public</code>) selects a configured source backend, the
+    path names the original, and the final segment is the transform:
+    <code>w{width}[,q{quality}].{format}</code>. Widths and qualities come
+    from closed allowlists, spelling out a default quality is rejected, and
+    the optional <code>v</code> token unlocks year-long immutable caching.
+    See the <a href="/docs/api.html">API reference</a> for the full grammar.
+  </p>
+
+  <h2>Why Pixtega</h2>
+  <ul class="features">
+    <li>
+      <strong>Bounded by design</strong>
+      Widths, formats, and qualities are closed allowlists in configuration.
+      Callers can never request an unbounded transform, and the service never
+      upscales a source image.
+    </li>
+    <li>
+      <strong>Three source transports</strong>
+      HTTP(S) origins, local filesystem roots, and S3 buckets — including
+      S3-compatible servers via a custom endpoint. Callers never see a
+      hostname, bucket, or directory, only a mount name.
+    </li>
+    <li>
+      <strong>Cache-first responses</strong>
+      Versioned successes are served with
+      <code>public, max-age=31536000, immutable</code>; unversioned successes
+      and 404s get configurable TTLs; every other error is
+      <code>no-store</code>. Built to sit behind a CDN.
+    </li>
+    <li>
+      <strong>Strict input validation</strong>
+      Paths are decoded exactly once and strictly validated: no traversal, no
+      encoded delimiters, canonical percent-encoding only. Symlinks below a
+      filesystem root are always rejected.
+    </li>
+    <li>
+      <strong>Abuse limits built in</strong>
+      A source download size cap, a megapixel decode-bomb guard, a single
+      timeout over the whole source exchange, a redirect bound, and a
+      process-wide concurrency limit — all configurable, all with hard
+      ranges.
+    </li>
+    <li>
+      <strong>Honest errors, structured logs</strong>
+      A precise error taxonomy (permission denied is 502, never a cacheable
+      404) and exactly one structured JSON completion event per request, with
+      a stable outcome from a closed set. Credentials and version tokens are
+      never logged.
+    </li>
+  </ul>
+
+  <h2>Output formats</h2>
+  <p>
+    WebP, AVIF, and JPEG, each with its own default quality and quality
+    allowlist. Encoding is done with libvips, and every enabled encoder is
+    verified at startup — a deployment missing an encoder fails fast instead
+    of serving partial formats.
+  </p>
+
+  <div class="callout">
+    The Rust crate and binary are named <code>image-service</code>; Pixtega
+    is the project name. The full behavioral contract lives in
+    <a href="https://github.com/kroofy/Pixtega/blob/main/SPEC.md">SPEC.md</a>.
+  </div>
+</main>
+
+<footer class="site">
+  <div class="inner">
+    Pixtega is dual-licensed under MIT OR Apache-2.0 ·
+    <a href="https://github.com/kroofy/Pixtega">github.com/kroofy/Pixtega</a>
+  </div>
+</footer>
+</body>
+</html>
