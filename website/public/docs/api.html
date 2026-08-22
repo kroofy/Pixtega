@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API reference — Pixtega</title>
+  <meta name="description" content="Pixtega API: URL grammar, transform syntax, caching behavior, and the error taxonomy.">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="site">
+  <div class="inner">
+    <a class="brand" href="/">Pixtega</a>
+    <nav>
+      <a href="/docs/getting-started.html">Getting started</a>
+      <a href="/docs/configuration.html">Configuration</a>
+      <a href="/docs/api.html" aria-current="page">API</a>
+      <a href="/docs/aws-lambda.html">AWS Lambda</a>
+      <a href="https://github.com/kroofy/Pixtega">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <h1>API reference</h1>
+  <p class="lead">
+    The entire API is one GET endpoint. Everything else — method, path
+    shape, transform, version token — is strictly validated, and every
+    derived image has exactly one URL.
+  </p>
+
+  <h2>URL grammar</h2>
+  <pre><code>GET /images/{mount}/{source-path}/{transform}[?v={source-version}]</code></pre>
+  <p>Example:</p>
+  <pre><code>GET /images/public/photos/example.jpg/w1280.webp?v=7d91c2</code></pre>
+  <ul>
+    <li>
+      <code>{mount}</code> selects a configured source. Callers can never
+      supply a hostname, bucket, directory, or transport.
+    </li>
+    <li>
+      <code>{source-path}</code> is everything between the mount and the
+      final segment. It is opaque, decoded exactly once, and strictly
+      validated: no traversal, no encoded delimiters, canonical
+      percent-encoding only.
+    </li>
+    <li>
+      <code>{transform}</code> is the final segment:
+      <code>w{width}[,q{quality}].{format}</code> with <code>format</code>
+      one of <code>webp</code>, <code>avif</code>, <code>jpeg</code> (no
+      aliases). Width must be in the configured allowlist; quality must be
+      in the selected format's allowlist. Omitting <code>q</code> uses the
+      format's default; spelling out the default is rejected, so each
+      derived image has exactly one URL.
+    </li>
+    <li>
+      <code>v</code> is an opaque version token
+      (<code>[A-Za-z0-9._~-]{1,128}</code>) used only for cache policy. The
+      service never appends it to the upstream key. Callers must change
+      <code>v</code> whenever the source bytes change.
+    </li>
+    <li>
+      Only <code>GET</code> is supported (anything else is 405, with an
+      <code>Allow: GET</code> header). Request targets over 8192 bytes are
+      rejected.
+    </li>
+  </ul>
+  <p>
+    The service never upscales: a source narrower than the requested width
+    keeps its original dimensions.
+  </p>
+
+  <h2>Caching</h2>
+  <table>
+    <thead>
+      <tr><th>Response</th><th>Cache-Control</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>200 with <code>v</code></td><td><code>public, max-age=31536000, immutable</code></td></tr>
+      <tr><td>200 without <code>v</code></td><td><code>public, max-age={unversioned_success_ttl_seconds}</code></td></tr>
+      <tr><td>404</td><td><code>public, max-age={not_found_ttl_seconds}</code></td></tr>
+      <tr><td>every other error</td><td><code>no-store</code></td></tr>
+    </tbody>
+  </table>
+  <div class="callout">
+    Do not enable year-long immutable caching unless every caller changes
+    <code>v</code> when source bytes change; the service cannot verify this
+    for you.
+  </div>
+
+  <h2>Errors</h2>
+  <p>Errors are JSON: <code>{ "error": "message" }</code>.</p>
+  <table>
+    <thead>
+      <tr><th>Status</th><th>Meaning</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>400</td><td>invalid path, mount, query, transform, width, format, or quality</td></tr>
+      <tr><td>404</td><td>the source answered authoritatively that the object is absent</td></tr>
+      <tr><td>405</td><td>method other than GET</td></tr>
+      <tr><td>500</td><td>resize/flatten/encode failed after a valid source was accepted</td></tr>
+      <tr><td>502</td><td>source answered without a usable object: permission denied, unexpected upstream status, oversized content, undecodable or unsupported image bytes</td></tr>
+      <tr><td>504</td><td>fetching the source timed out</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Permission denial is always 502, never 404, so a misconfigured bucket
+    cannot be cached as "missing".
+  </p>
+
+  <h2>Response headers</h2>
+  <p>
+    Successful responses carry the derived image's <code>Content-Type</code>
+    and the <code>Cache-Control</code> policy above. Every response — success
+    or error — also carries <code>X-Content-Type-Options: nosniff</code>,
+    <code>Content-Security-Policy: default-src 'none'</code>, and
+    <code>X-Frame-Options: DENY</code>.
+  </p>
+
+  <h2>Observability</h2>
+  <p>
+    The service emits one structured JSON completion event per request on
+    stdout, with status, a stable outcome from a closed set
+    (<code>success</code>, <code>rejected_request</code>,
+    <code>not_found</code>, <code>timeout</code>,
+    <code>source_too_large</code>, <code>source_unavailable</code>,
+    <code>undecodable_source</code>, <code>resize_failed</code>,
+    <code>flatten_failed</code>, <code>encode_failed</code>), mount, output
+    width/format, upstream status, byte counts, and elapsed milliseconds.
+    Response bodies, credentials, and <code>v</code> values are never
+    logged.
+  </p>
+
+  <div class="callout">
+    The complete, normative contract — including every path-validation rule
+    and adapter behavior — is in
+    <a href="https://github.com/kroofy/Pixtega/blob/main/SPEC.md">SPEC.md</a>.
+  </div>
+</main>
+
+<footer class="site">
+  <div class="inner">
+    Pixtega is dual-licensed under MIT OR Apache-2.0 ·
+    <a href="https://github.com/kroofy/Pixtega">github.com/kroofy/Pixtega</a>
+  </div>
+</footer>
+</body>
+</html>

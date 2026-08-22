@@ -1,0 +1,10 @@
+// Pixtega docs site: a static Cloudflare Workers assets site.
+// Deploy from this directory with: npx wrangler deploy
+{
+  "name": "pixtega",
+  "compatibility_date": "2026-08-22",
+  "assets": {
+    "directory": "./public"
+  },
+  "workers_dev": true
+}

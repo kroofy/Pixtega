@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Getting started — Pixtega</title>
+  <meta name="description" content="Run Pixtega locally with cargo or in a container with Docker.">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="site">
+  <div class="inner">
+    <a class="brand" href="/">Pixtega</a>
+    <nav>
+      <a href="/docs/getting-started.html" aria-current="page">Getting started</a>
+      <a href="/docs/configuration.html">Configuration</a>
+      <a href="/docs/api.html">API</a>
+      <a href="/docs/aws-lambda.html">AWS Lambda</a>
+      <a href="https://github.com/kroofy/Pixtega">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <h1>Getting started</h1>
+  <p class="lead">
+    Pixtega ships as a single Rust binary named <code>image-service</code>.
+    Run it locally with cargo or in a container — the repository bundles
+    fixture images so the quick start needs no network access.
+  </p>
+
+  <h2>Quick start (bundled fixtures, no network)</h2>
+  <pre><code>git clone https://github.com/kroofy/Pixtega.git
+cd Pixtega
+cargo run -- config.local.toml
+# in another shell:
+curl -o out.webp 'http://127.0.0.1:8080/images/fixtures/photos/example.jpg/w640.webp'</code></pre>
+  <p>
+    <code>config.local.toml</code> serves the bundled <code>fixtures/</code>
+    directory through a filesystem source mounted at <code>fixtures</code>.
+    The response is a 640-pixel-wide WebP derived from the bundled JPEG.
+  </p>
+
+  <h2>Build dependencies</h2>
+  <p>
+    The service encodes with libvips, so building from source needs the
+    libvips development headers.
+  </p>
+
+  <h3>Linux (Debian/Ubuntu)</h3>
+  <pre><code>sudo apt-get install libvips-dev libheif-plugin-aomenc pkg-config
+cargo run -- config.local.toml</code></pre>
+  <p>
+    Ubuntu splits libheif encoders into plugin packages. Without
+    <code>libheif-plugin-aomenc</code>, AVIF encoding is unavailable and the
+    service refuses to start when <code>[formats.avif]</code> is enabled —
+    it verifies every enabled encoder at startup.
+  </p>
+
+  <h3>macOS</h3>
+  <pre><code>brew install vips pkg-config
+cargo run -- config.local.toml</code></pre>
+  <p>Homebrew's <code>vips</code> includes AVIF support via libheif.</p>
+
+  <h2>Docker</h2>
+  <pre><code>docker build -t image-service .
+docker run --rm -p 8080:8080 image-service            # serves config.example.toml
+docker run --rm -p 8080:8080 \
+  -v "$PWD/myconfig.toml:/config/config.toml:ro" \
+  image-service /config/config.toml</code></pre>
+  <p>
+    The image's default command serves
+    <a href="/docs/configuration.html"><code>config.example.toml</code></a>,
+    which listens on <code>0.0.0.0:8080</code> and includes the bundled
+    fixtures mount. Pass your own TOML path as the container command to
+    replace it.
+  </p>
+
+  <h2>Next steps</h2>
+  <ul>
+    <li><a href="/docs/configuration.html">Configuration</a> — the full TOML schema, precedence, and validation rules.</li>
+    <li><a href="/docs/api.html">API reference</a> — URL grammar, caching, and the error taxonomy.</li>
+    <li><a href="/docs/aws-lambda.html">Deploy on AWS Lambda</a> — the recommended serverless deployment path.</li>
+  </ul>
+</main>
+
+<footer class="site">
+  <div class="inner">
+    Pixtega is dual-licensed under MIT OR Apache-2.0 ·
+    <a href="https://github.com/kroofy/Pixtega">github.com/kroofy/Pixtega</a>
+  </div>
+</footer>
+</body>
+</html>
