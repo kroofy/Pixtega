@@ -22,8 +22,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "==> docker build"
-docker build -t "$IMAGE_TAG" .
+# CI pre-builds the image with buildx + GitHub Actions layer caching and
+# sets PIXTEGA_SKIP_BUILD=1; everywhere else the script builds it here.
+if [ "${PIXTEGA_SKIP_BUILD:-0}" = "1" ]; then
+    echo "==> skipping docker build (PIXTEGA_SKIP_BUILD=1), using existing ${IMAGE_TAG}"
+    docker image inspect "$IMAGE_TAG" >/dev/null
+else
+    echo "==> docker build"
+    docker build -t "$IMAGE_TAG" .
+fi
 
 echo "==> docker run (example configuration baked into the image)"
 # The image's default CMD is /app/config.example.toml; publish container
