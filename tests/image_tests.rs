@@ -13,10 +13,10 @@
 use std::io::Cursor;
 
 use image::{DynamicImage, GenericImageView, RgbImage, RgbaImage};
-use image_service::errors::ProcessError;
-use image_service::processor::{init_vips, process_image, verify_encoders};
-use image_service::types::{OutputFormat, Transform};
 use libvips::VipsImage;
+use pixtega::errors::ProcessError;
+use pixtega::processor::{init_vips, process_image, verify_encoders};
+use pixtega::types::{OutputFormat, Transform};
 
 // ---------------------------------------------------------------- helpers
 

@@ -54,19 +54,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libheif-plugin-aomenc \
         libvips42t64 \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --create-home --shell /usr/sbin/nologin imageservice
+    && useradd --system --create-home --shell /usr/sbin/nologin pixtega
 
 WORKDIR /app
-COPY --from=build /app/target/release/image-service /usr/local/bin/image-service
+COPY --from=build /app/target/release/pixtega /usr/local/bin/pixtega
 COPY fixtures ./fixtures
 
-USER imageservice
+USER pixtega
 EXPOSE 8080
 # The adapter forwards to 127.0.0.1:8080 by default (AWS_LWA_PORT); the
 # TCP readiness check avoids requiring an HTTP health endpoint.
 ENV AWS_LWA_READINESS_CHECK_PROTOCOL=tcp
 
-ENTRYPOINT ["/usr/local/bin/image-service"]
+ENTRYPOINT ["/usr/local/bin/pixtega"]
 # No default config: supply one via the CONFIG (inline TOML) or CONFIG_FILE
 # environment variable, or pass a path as the container command.
 CMD []

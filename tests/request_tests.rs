@@ -8,10 +8,10 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use image_service::config::{AppConfig, FilesystemSourceConfig, FormatPolicy, SourceConfig};
-use image_service::errors::RequestError;
-use image_service::request::{parse_request, MAX_TARGET_BYTES};
-use image_service::types::{OutputFormat, Transform};
+use pixtega::config::{AppConfig, FilesystemSourceConfig, FormatPolicy, SourceConfig};
+use pixtega::errors::RequestError;
+use pixtega::request::{parse_request, MAX_TARGET_BYTES};
+use pixtega::types::{OutputFormat, Transform};
 
 const ALLOWED_WIDTHS: [u32; 4] = [320, 640, 1280, 1920];
 
@@ -105,7 +105,7 @@ fn config_with_shared_quality() -> AppConfig {
     cfg
 }
 
-fn ok(cfg: &AppConfig, path: &str, query: Option<&str>) -> image_service::types::ResolvedRequest {
+fn ok(cfg: &AppConfig, path: &str, query: Option<&str>) -> pixtega::types::ResolvedRequest {
     parse_request(cfg, path, query)
         .unwrap_or_else(|err| panic!("expected {path:?} (query {query:?}) to parse, got {err:?}"))
 }

@@ -7,9 +7,9 @@
 
 use std::path::Path;
 
-use image_service::config::{load_from_file, load_from_str, AppConfig, SourceConfig};
-use image_service::errors::ConfigError;
-use image_service::types::OutputFormat;
+use pixtega::config::{load_from_file, load_from_str, AppConfig, SourceConfig};
+use pixtega::errors::ConfigError;
+use pixtega::types::OutputFormat;
 
 // ---------------------------------------------------------------------------
 // Helpers: a known-good configuration with replaceable parts.

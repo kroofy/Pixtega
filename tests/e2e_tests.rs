@@ -1,6 +1,6 @@
 //! End-to-end acceptance tests (SPEC.md "End-to-end acceptance").
 //!
-//! Every test spawns the REAL service binary (`CARGO_BIN_EXE_image-service`)
+//! Every test spawns the REAL service binary (`CARGO_BIN_EXE_pixtega`)
 //! as a child process with its own tempdir-written TOML configuration, plus
 //! local fixture servers on 127.0.0.1. The service listens on an ephemeral
 //! port announced by its `{"event":"listening",...}` startup line.
@@ -47,7 +47,7 @@ async fn spawn_service(dir: &Path, config_toml: &str, envs: &[(&str, &str)]) -> 
     let config_path = dir.join("config.toml");
     std::fs::write(&config_path, config_toml).expect("write config");
 
-    let mut command = Command::new(env!("CARGO_BIN_EXE_image-service"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_pixtega"));
     command
         .arg(&config_path)
         .stdout(Stdio::piped())

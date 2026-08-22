@@ -18,14 +18,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use image::RgbImage;
-use image_service::app::{build_router, AppState};
-use image_service::config::{
+use pixtega::app::{build_router, AppState};
+use pixtega::config::{
     AppConfig, FilesystemSourceConfig, FormatPolicy, HttpSourceConfig, SourceConfig,
 };
-use image_service::errors::ProcessError;
-use image_service::processor::init_vips;
-use image_service::sources::SourceRegistry;
-use image_service::types::OutputFormat;
+use pixtega::errors::ProcessError;
+use pixtega::processor::init_vips;
+use pixtega::sources::SourceRegistry;
+use pixtega::types::OutputFormat;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use url::Url;
@@ -540,7 +540,7 @@ fn hostile_error_messages_cannot_corrupt_the_json_body() {
         "{\"error\":\"forged\"}",
         "\u{202e}control\u{7f}",
     ] {
-        let body = image_service::app::error_body(message);
+        let body = pixtega::app::error_body(message);
         let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be JSON");
         assert_eq!(parsed["error"].as_str(), Some(message));
         assert_eq!(parsed.as_object().map(|o| o.len()), Some(1));

@@ -10,11 +10,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Once};
 use std::time::{Duration, Instant};
 
-use image_service::config::S3SourceConfig;
-use image_service::errors::SourceError;
-use image_service::sources::s3::S3Source;
-use image_service::sources::{FetchLimits, Source};
-use image_service::types::UpstreamKey;
+use pixtega::config::S3SourceConfig;
+use pixtega::errors::SourceError;
+use pixtega::sources::s3::S3Source;
+use pixtega::sources::{FetchLimits, Source};
+use pixtega::types::UpstreamKey;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use url::Url;

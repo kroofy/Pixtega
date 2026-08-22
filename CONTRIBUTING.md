@@ -1,7 +1,7 @@
 # Contributing to Pixtega
 
 Thanks for your interest in contributing. Pixtega (crate and binary name:
-`image-service`) is an on-demand image derivation service; the normative
+`pixtega`) is an on-demand image derivation service; the normative
 behavioral contract is [SPEC.md](SPEC.md), and changes must stay within it.
 
 ## Building
@@ -62,11 +62,10 @@ is in [docs/semantic-mutants.md](docs/semantic-mutants.md).
   identical copies: the former is the project's contract, the latter is the
   benchmark packaging of it. Treat `SPEC.md` as canonical; the duplicate is
   kept intentionally for the benchmark and may be consolidated later.
-- The project name is Pixtega; the Rust crate and binary remain
-  `image-service`.
+- The project name is Pixtega; the Rust crate and binary are named
+  `pixtega`.
 
 ## License
 
-By contributing, you agree that your contributions are dual-licensed under
-MIT OR Apache-2.0, matching the project
-([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)).
+By contributing, you agree that your contributions are licensed under the
+MIT license, matching the project ([LICENSE](LICENSE)).

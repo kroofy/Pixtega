@@ -4,8 +4,7 @@ An on-demand image derivation service. It fetches an image from a
 configured Source (HTTP(S), filesystem, or S3), derives a bounded variant
 (width, format, optional quality), and returns cacheable image bytes.
 
-Pixtega is the project name; the Rust crate and binary remain
-`image-service` (binary name: `image-service`).
+The Rust crate and binary are also named `pixtega`.
 
 The full contract lives in [SPEC.md](SPEC.md). This README covers running
 and operating the service.
@@ -177,11 +176,11 @@ Homebrew's `vips` includes AVIF support via libheif.
 ### Container
 
 ```bash
-docker build -t image-service .
-docker run --rm -p 8080:8080 image-service            # serves config.example.toml
+docker build -t pixtega .
+docker run --rm -p 8080:8080 pixtega            # serves config.example.toml
 docker run --rm -p 8080:8080 \
   -v "$PWD/myconfig.toml:/config/config.toml:ro" \
-  image-service /config/config.toml
+  pixtega /config/config.toml
 ```
 
 ### AWS Lambda
@@ -226,5 +225,5 @@ in [docs/semantic-mutants.md](docs/semantic-mutants.md).
 
 ## License
 
-MIT OR Apache-2.0. See [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE),
-and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+MIT. See [LICENSE](LICENSE) and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

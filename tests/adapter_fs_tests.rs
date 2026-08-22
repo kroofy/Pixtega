@@ -8,11 +8,11 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::time::Duration;
 
-use image_service::config::FilesystemSourceConfig;
-use image_service::errors::SourceError;
-use image_service::sources::filesystem::FilesystemSource;
-use image_service::sources::{FetchLimits, Source};
-use image_service::types::UpstreamKey;
+use pixtega::config::FilesystemSourceConfig;
+use pixtega::errors::SourceError;
+use pixtega::sources::filesystem::FilesystemSource;
+use pixtega::sources::{FetchLimits, Source};
+use pixtega::types::UpstreamKey;
 
 fn limits(max_bytes: u64) -> FetchLimits {
     FetchLimits {

@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use image_service::{app, config, processor};
+use pixtega::{app, config, processor};
 
 fn config_source() -> Result<(String, PathBuf), String> {
     // Precedence: CLI path, then CONFIG_FILE, then inline CONFIG.
