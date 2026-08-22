@@ -1,7 +1,8 @@
 # CI, mutation score, and releases
 
-Three GitHub Actions workflows, all driven only by the built-in
-`GITHUB_TOKEN` — no extra repository secrets.
+Four GitHub Actions workflows. CI, Mutants, and Release use only the
+built-in `GITHUB_TOKEN`. Website deploy also needs two repo secrets
+(`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`).
 
 ## CI (`.github/workflows/ci.yml`)
 
@@ -102,3 +103,17 @@ Permissions (declared per job in the workflow):
 
 Everything is MIT ([LICENSE](../LICENSE)); release artifacts bundle
 `LICENSE` and `THIRD_PARTY_NOTICES.md`.
+
+## Website (`.github/workflows/website.yml`)
+
+Deploys the static docs site (`website/`) to the existing `pixtega`
+Cloudflare Worker on push to `main` when `website/**` or the workflow
+file itself changes. `workflow_dispatch` redeploys the current `main`.
+
+Runs `npx --yes wrangler@4 deploy` from `website/` (no build step).
+Wrangler reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` from
+the environment; both must be set as repository secrets (Settings →
+Secrets and variables → Actions) before the first green deploy. The
+token needs Edit Cloudflare Workers. The job has `contents: read` only.
+
+See [website/README.md](../website/README.md).
