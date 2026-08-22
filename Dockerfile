@@ -26,8 +26,19 @@ COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
 # rustup installs the toolchain pinned by rust-toolchain.toml on first use.
 RUN rustup show active-toolchain || rustup toolchain install
 
+# Compile dependencies against stub sources so they land in their own layer,
+# keyed on Cargo.lock alone. Source-only changes then rebuild just this crate.
+RUN mkdir src \
+    && echo '' > src/lib.rs \
+    && echo 'fn main() {}' > src/main.rs \
+    && cargo build --release --locked \
+    && rm -rf src
+
 COPY src ./src
-RUN cargo build --release --locked
+# touch: the stub build already produced crate artifacts with newer mtimes
+# than the COPYed sources, so without it cargo would skip recompiling and
+# ship the stub binary.
+RUN touch src/lib.rs src/main.rs && cargo build --release --locked
 
 FROM ubuntu:24.04
 

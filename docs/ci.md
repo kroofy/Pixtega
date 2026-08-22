@@ -12,9 +12,15 @@ Runs on every pull request and every push to `main`. Two jobs:
   toolchain pinned by [rust-toolchain.toml](../rust-toolchain.toml)
   (rustup installs the pin; CI cannot drift from it). Cargo registry and
   build artifacts are cached with `Swatinem/rust-cache`.
-- **container** — `./scripts/container-acceptance.sh` verbatim: builds the
-  repository Dockerfile, runs the image, and asserts a 200 `image/webp`
-  WebP body from the fixtures success case.
+- **container** — builds the repository Dockerfile via buildx with
+  GitHub Actions layer caching (`cache-from/cache-to: type=gha,mode=max`),
+  then runs `./scripts/container-acceptance.sh` with `PIXTEGA_SKIP_BUILD=1`
+  to start the image and assert a 200 `image/webp` WebP body from the
+  fixtures success case. The Dockerfile compiles dependencies in a layer
+  keyed on `Cargo.lock` alone, so source-only changes reuse the cached
+  dependency layer; a `Cargo.lock` change pays one full recompile, then
+  re-caches. Run locally without any env vars — the script then builds
+  the image itself.
 
 Both jobs run on `ubuntu-24.04` pinned (not `ubuntu-latest`): noble's
 libvips 8.15 matches the pinned `libvips = "=1.6.1"` bindings and its

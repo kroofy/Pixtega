@@ -4,9 +4,9 @@
 #   check     - exactly ./scripts/check.sh (fmt --check, clippy -D warnings,
 #               unit + integration tests) on the toolchain pinned by
 #               rust-toolchain.toml.
-#   container - exactly ./scripts/container-acceptance.sh (Docker build of
-#               the repository Dockerfile + a curl smoke test against the
-#               running image).
+#   container - Docker build of the repository Dockerfile (buildx with GHA
+#               layer caching), then ./scripts/container-acceptance.sh with
+#               PIXTEGA_SKIP_BUILD=1 (run image + curl smoke test).
 #
 # Mutation testing is intentionally NOT here: a full cargo-mutants run takes
 # hours and lives in .github/workflows/mutants.yml (cron + manual dispatch).
@@ -66,7 +66,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Full acceptance script: docker build + run + curl smoke asserting a
-      # 200 image/webp WebP body. GitHub-hosted runners include Docker.
+      - uses: docker/setup-buildx-action@v3
+
+      # Build the exact image the script would build, but through buildx with
+      # GitHub Actions layer caching. The Dockerfile compiles dependencies in
+      # a layer keyed on Cargo.lock alone, so source-only changes reuse the
+      # cached dependency layer and skip the ~6-minute dependency compile.
+      # mode=max also caches the build-stage layers (the dependency layer
+      # lives there); the default mode would cache only the runtime stage.
+      - name: Build image with GHA layer cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          tags: pixtega-acceptance:local
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Acceptance script minus the build: run the image + curl smoke
+      # asserting a 200 image/webp WebP body.
       - name: container-acceptance.sh
-        run: ./scripts/container-acceptance.sh
+        run: PIXTEGA_SKIP_BUILD=1 ./scripts/container-acceptance.sh
