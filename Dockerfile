@@ -37,14 +37,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libheif-plugin-aomenc \
         libvips42t64 \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --create-home --shell /usr/sbin/nologin imageservice
+    && useradd --system --create-home --shell /usr/sbin/nologin pixtega
 
 WORKDIR /app
-COPY --from=build /app/target/release/image-service /usr/local/bin/image-service
+COPY --from=build /app/target/release/pixtega /usr/local/bin/pixtega
 COPY config.example.toml ./config.example.toml
 COPY fixtures ./fixtures
 
-USER imageservice
+USER pixtega
 EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/image-service"]
+ENTRYPOINT ["/usr/local/bin/pixtega"]
 CMD ["/app/config.example.toml"]

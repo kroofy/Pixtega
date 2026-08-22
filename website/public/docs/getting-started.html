@@ -24,7 +24,7 @@
 <main>
   <h1>Getting started</h1>
   <p class="lead">
-    Pixtega ships as a single Rust binary named <code>image-service</code>.
+    Pixtega ships as a single Rust binary named <code>pixtega</code>.
     Run it locally with cargo or in a container — the repository bundles
     fixture images so the quick start needs no network access.
   </p>
@@ -63,11 +63,11 @@ cargo run -- config.local.toml</code></pre>
   <p>Homebrew's <code>vips</code> includes AVIF support via libheif.</p>
 
   <h2>Docker</h2>
-  <pre><code>docker build -t image-service .
-docker run --rm -p 8080:8080 image-service            # serves config.example.toml
+  <pre><code>docker build -t pixtega .
+docker run --rm -p 8080:8080 pixtega            # serves config.example.toml
 docker run --rm -p 8080:8080 \
   -v "$PWD/myconfig.toml:/config/config.toml:ro" \
-  image-service /config/config.toml</code></pre>
+  pixtega /config/config.toml</code></pre>
   <p>
     The image's default command serves
     <a href="/docs/configuration.html"><code>config.example.toml</code></a>,
@@ -86,7 +86,7 @@ docker run --rm -p 8080:8080 \
 
 <footer class="site">
   <div class="inner">
-    Pixtega is dual-licensed under MIT OR Apache-2.0 ·
+    Pixtega is MIT licensed ·
     <a href="https://github.com/kroofy/Pixtega">github.com/kroofy/Pixtega</a>
   </div>
 </footer>

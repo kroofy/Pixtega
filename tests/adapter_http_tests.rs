@@ -11,11 +11,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use image_service::config::HttpSourceConfig;
-use image_service::errors::SourceError;
-use image_service::sources::http::HttpSource;
-use image_service::sources::{FetchLimits, Source};
-use image_service::types::UpstreamKey;
+use pixtega::config::HttpSourceConfig;
+use pixtega::errors::SourceError;
+use pixtega::sources::http::HttpSource;
+use pixtega::sources::{FetchLimits, Source};
+use pixtega::types::UpstreamKey;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
 use url::Url;

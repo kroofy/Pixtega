@@ -95,7 +95,7 @@ static VIPS_INIT: Once = Once::new();
 pub fn init_vips() {
     VIPS_INIT.call_once(|| {
         let app =
-            VipsApp::new("image-service", false).expect("libvips runtime failed to initialize");
+            VipsApp::new("pixtega", false).expect("libvips runtime failed to initialize");
         // Modest per-operation thread pool: request-level parallelism comes
         // from max_concurrent_derivations, not from libvips worker threads.
         app.concurrency_set(2);

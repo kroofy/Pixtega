@@ -11,8 +11,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-IMAGE_TAG="image-service-acceptance:local"
-CONTAINER_NAME="image-service-acceptance-$$"
+IMAGE_TAG="pixtega-acceptance:local"
+CONTAINER_NAME="pixtega-acceptance-$$"
 WORK_DIR="$(mktemp -d)"
 
 cleanup() {

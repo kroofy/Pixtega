@@ -1,7 +1,7 @@
 # Third-party notices
 
-This project is licensed under MIT OR Apache-2.0 (see `LICENSE-MIT` and
-`LICENSE-APACHE`). It depends on third-party software with its own licenses.
+Pixtega is licensed under the MIT license (see `LICENSE`). It depends on
+third-party software with its own licenses.
 
 ## Native libraries (dynamically linked at runtime)
 
