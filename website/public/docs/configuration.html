@@ -5,52 +5,64 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Configuration — Pixtega</title>
   <meta name="description" content="Pixtega configuration: TOML schema, precedence between CLI path, CONFIG_FILE, and inline CONFIG, and every limit with its allowed range.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2' y='2' width='20' height='20' rx='5' fill='%234338ca'/%3E%3Ccircle cx='9' cy='9' r='2.2' fill='white'/%3E%3Cpath d='M4.5 17.5l4.5-5 3.5 4 3-3.5 4 4.5z' fill='white'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <header class="site">
   <div class="inner">
-    <a class="brand" href="/">Pixtega</a>
+    <a class="brand" href="/">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" fill="currentColor"/><circle cx="9" cy="9" r="2.2" fill="var(--bg)"/><path d="M4.5 17.5l4.5-5 3.5 4 3-3.5 4 4.5z" fill="var(--bg)"/></svg>
+      Pixtega
+    </a>
     <nav>
-      <a href="/docs/getting-started.html">Getting started</a>
-      <a href="/docs/configuration.html" aria-current="page">Configuration</a>
-      <a href="/docs/api.html">API</a>
-      <a href="/docs/aws-lambda.html">AWS Lambda</a>
+      <a href="/docs/getting-started.html" aria-current="true">Docs</a>
       <a href="https://github.com/kroofy/Pixtega">GitHub</a>
     </nav>
   </div>
 </header>
 
-<main>
-  <h1>Configuration</h1>
-  <p class="lead">
-    Pixtega is configured with a single TOML document. The schema is closed:
-    an unknown field stops startup, as does any invalid value. There are no
-    silent defaults for limits — what you configure is what runs.
-  </p>
+<div class="layout">
+  <aside class="sidebar">
+    <nav aria-label="Documentation">
+      <span class="sidebar-title">Documentation</span>
+      <a href="/docs/getting-started.html">Getting started</a>
+      <a href="/docs/configuration.html" aria-current="page">Configuration</a>
+      <a href="/docs/api.html">API reference</a>
+      <a href="/docs/aws-lambda.html">AWS Lambda</a>
+    </nav>
+  </aside>
 
-  <h2>Where configuration comes from</h2>
-  <p>The service checks three places, in this order, and uses the first match:</p>
-  <ol>
-    <li><strong>CLI argument</strong> — a TOML file path passed as the first argument: <code>pixtega /path/to/config.toml</code></li>
-    <li><strong><code>CONFIG_FILE</code></strong> — an environment variable holding a TOML file path.</li>
-    <li><strong><code>CONFIG</code></strong> — an environment variable holding the full TOML document inline. Useful where mounting files is awkward, such as <a href="/docs/aws-lambda.html">AWS Lambda</a>.</li>
-  </ol>
-  <p>
-    If none is provided, startup fails with
-    <code>no configuration: pass a TOML path, or set CONFIG_FILE or CONFIG</code>.
-    Relative paths inside a config file (filesystem roots, CA certificate
-    files) resolve against the file's directory; with inline
-    <code>CONFIG</code>, they resolve against the process working directory.
-  </p>
+  <main>
+    <h1>Configuration</h1>
+    <p class="lead">
+      Pixtega is configured with a single TOML document. The schema is closed:
+      an unknown field stops startup, as does any invalid value. There are no
+      silent defaults for limits — what you configure is what runs.
+    </p>
 
-  <h2>Annotated overview</h2>
-  <p>
-    This mirrors
-    <a href="https://github.com/kroofy/Pixtega/blob/main/config.example.toml"><code>config.example.toml</code></a>
-    from the repository.
-  </p>
-  <pre><code># Where to listen.
+    <h2 id="where-configuration-comes-from">Where configuration comes from<a class="anchor" href="#where-configuration-comes-from" aria-label="Link to this section">#</a></h2>
+    <p>The service checks three places, in this order, and uses the first match:</p>
+    <ol>
+      <li><strong>CLI argument</strong> — a TOML file path passed as the first argument: <code>pixtega /path/to/config.toml</code></li>
+      <li><strong><code>CONFIG_FILE</code></strong> — an environment variable holding a TOML file path.</li>
+      <li><strong><code>CONFIG</code></strong> — an environment variable holding the full TOML document inline. Useful where mounting files is awkward, such as <a href="/docs/aws-lambda.html">AWS Lambda</a>.</li>
+    </ol>
+    <p>
+      If none is provided, startup fails with
+      <code>no configuration: pass a TOML path, or set CONFIG_FILE or CONFIG</code>.
+      Relative paths inside a config file (filesystem roots, CA certificate
+      files) resolve against the file's directory; with inline
+      <code>CONFIG</code>, they resolve against the process working directory.
+    </p>
+
+    <h2 id="annotated-overview">Annotated overview<a class="anchor" href="#annotated-overview" aria-label="Link to this section">#</a></h2>
+    <p>
+      This mirrors
+      <a href="https://github.com/kroofy/Pixtega/blob/main/config.example.toml"><code>config.example.toml</code></a>
+      from the repository.
+    </p>
+    <pre><code># Where to listen.
 listen_address = "0.0.0.0:8080"
 # URL prefix for the image contract; requests outside it are rejected.
 path_prefix = "/images"
@@ -110,76 +122,94 @@ transport = "s3"
 bucket = "example-image-bucket"
 region = "us-east-1"</code></pre>
 
-  <h2>Limits and allowed ranges</h2>
-  <table>
-    <thead>
-      <tr><th>Field</th><th>Range</th><th>Purpose</th></tr>
-    </thead>
-    <tbody>
-      <tr><td><code>allowed_widths</code></td><td>each in 1..=16384</td><td>the closed Width Allowlist</td></tr>
-      <tr><td><code>max_download_bytes</code></td><td>1..=104857600</td><td>source size cap, enforced on the advertised length and again while streaming</td></tr>
-      <tr><td><code>max_source_megapixels</code></td><td>1..=500</td><td>decode-bomb guard, checked from header metadata before decoding</td></tr>
-      <tr><td><code>download_timeout_ms</code></td><td>1..=60000</td><td>one timeout over the whole source exchange</td></tr>
-      <tr><td><code>max_redirects</code></td><td>0..=10</td><td>HTTP(S) redirect bound (same origin, same base path only)</td></tr>
-      <tr><td><code>max_concurrent_derivations</code></td><td>1..=64</td><td>process-wide fetch+process permits</td></tr>
-      <tr><td><code>unversioned_success_ttl_seconds</code></td><td>1..=86400</td><td>cache lifetime without <code>v</code></td></tr>
-      <tr><td><code>not_found_ttl_seconds</code></td><td>1..=3600</td><td>cache lifetime of 404s</td></tr>
-    </tbody>
-  </table>
+    <h2 id="limits">Limits and allowed ranges<a class="anchor" href="#limits" aria-label="Link to this section">#</a></h2>
+    <table>
+      <thead>
+        <tr><th>Field</th><th>Range</th><th>Purpose</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>allowed_widths</code></td><td>each in 1..=16384</td><td>the closed Width Allowlist</td></tr>
+        <tr><td><code>max_download_bytes</code></td><td>1..=104857600</td><td>source size cap, enforced on the advertised length and again while streaming</td></tr>
+        <tr><td><code>max_source_megapixels</code></td><td>1..=500</td><td>decode-bomb guard, checked from header metadata before decoding</td></tr>
+        <tr><td><code>download_timeout_ms</code></td><td>1..=60000</td><td>one timeout over the whole source exchange</td></tr>
+        <tr><td><code>max_redirects</code></td><td>0..=10</td><td>HTTP(S) redirect bound (same origin, same base path only)</td></tr>
+        <tr><td><code>max_concurrent_derivations</code></td><td>1..=64</td><td>process-wide fetch+process permits</td></tr>
+        <tr><td><code>unversioned_success_ttl_seconds</code></td><td>1..=86400</td><td>cache lifetime without <code>v</code></td></tr>
+        <tr><td><code>not_found_ttl_seconds</code></td><td>1..=3600</td><td>cache lifetime of 404s</td></tr>
+      </tbody>
+    </table>
 
-  <h2>Source transports</h2>
-  <h3>http</h3>
-  <p>
-    Requires <code>base_url</code> (http or https). An optional
-    <code>ca_certificate_file</code> (PEM, HTTPS only, resolved relative to
-    the config file) supports local fixture servers; hostname verification
-    always stays on. Use HTTPS outside loopback and trusted private
-    networks.
-  </p>
+    <h2 id="source-transports">Source transports<a class="anchor" href="#source-transports" aria-label="Link to this section">#</a></h2>
+    <h3>http</h3>
+    <p>
+      Requires <code>base_url</code> (http or https). An optional
+      <code>ca_certificate_file</code> (PEM, HTTPS only, resolved relative to
+      the config file) supports local fixture servers; hostname verification
+      always stays on. Use HTTPS outside loopback and trusted private
+      networks.
+    </p>
 
-  <h3>filesystem</h3>
-  <p>
-    Requires <code>root</code>, resolved relative to the config file and
-    canonicalized at startup. Symlinks below the root are always rejected.
-  </p>
+    <h3>filesystem</h3>
+    <p>
+      Requires <code>root</code>, resolved relative to the config file and
+      canonicalized at startup. Symlinks below the root are always rejected.
+    </p>
 
-  <h3>s3</h3>
-  <p>
-    Requires <code>bucket</code> and <code>region</code>; optional
-    <code>endpoint_url</code> and <code>force_path_style</code> support local
-    S3-compatible servers.
-  </p>
+    <h3>s3</h3>
+    <p>
+      Requires <code>bucket</code> and <code>region</code>; optional
+      <code>endpoint_url</code> and <code>force_path_style</code> support local
+      S3-compatible servers.
+    </p>
 
-  <h2>S3 credentials and permissions</h2>
-  <p>
-    Credentials are never read from TOML. The adapter uses the standard AWS
-    SDK credential provider chain: environment variables
-    (<code>AWS_ACCESS_KEY_ID</code>/<code>AWS_SECRET_ACCESS_KEY</code>),
-    shared config/credentials files and profiles, and instance/task roles.
-  </p>
-  <p>
-    The service needs <code>s3:GetObject</code> on the configured prefix.
-    With <code>GetObject</code> permission alone, S3 answers a missing key
-    with 403 instead of 404 unless the principal also has
-    <code>s3:ListBucket</code>; without list permission every missing object
-    is reported (correctly, per the
-    <a href="/docs/api.html">error taxonomy</a>) as 502 source-unavailable
-    rather than 404. Grant <code>s3:ListBucket</code> on the bucket if you
-    want missing keys to become cacheable 404s.
-  </p>
+    <h2 id="s3-credentials">S3 credentials and permissions<a class="anchor" href="#s3-credentials" aria-label="Link to this section">#</a></h2>
+    <p>
+      Credentials are never read from TOML. The adapter uses the standard AWS
+      SDK credential provider chain: environment variables
+      (<code>AWS_ACCESS_KEY_ID</code>/<code>AWS_SECRET_ACCESS_KEY</code>),
+      shared config/credentials files and profiles, and instance/task roles.
+    </p>
+    <p>
+      The service needs <code>s3:GetObject</code> on the configured prefix.
+      With <code>GetObject</code> permission alone, S3 answers a missing key
+      with 403 instead of 404 unless the principal also has
+      <code>s3:ListBucket</code>; without list permission every missing object
+      is reported (correctly, per the
+      <a href="/docs/api.html">error taxonomy</a>) as 502 source-unavailable
+      rather than 404. Grant <code>s3:ListBucket</code> on the bucket if you
+      want missing keys to become cacheable 404s.
+    </p>
 
-  <div class="callout">
-    Every validation rule is enforced at startup with a specific error.
-    When in doubt, the startup error messages and
-    <a href="https://github.com/kroofy/Pixtega/blob/main/config.example.toml">config.example.toml</a>
-    are authoritative.
-  </div>
-</main>
+    <div class="callout">
+      Every validation rule is enforced at startup with a specific error.
+      When in doubt, the startup error messages and
+      <a href="https://github.com/kroofy/Pixtega/blob/main/config.example.toml">config.example.toml</a>
+      are authoritative.
+    </div>
+
+    <nav class="pager" aria-label="Docs pages">
+      <a href="/docs/getting-started.html">
+        <span class="pager-label">Previous</span>
+        <span class="pager-title">Getting started</span>
+      </a>
+      <a class="next" href="/docs/api.html">
+        <span class="pager-label">Next</span>
+        <span class="pager-title">API reference</span>
+      </a>
+    </nav>
+  </main>
+</div>
 
 <footer class="site">
   <div class="inner">
-    Pixtega is MIT licensed ·
-    <a href="https://github.com/kroofy/Pixtega">github.com/kroofy/Pixtega</a>
+    <span>Pixtega is MIT licensed</span>
+    <nav>
+      <a href="/docs/getting-started.html">Getting started</a>
+      <a href="/docs/configuration.html">Configuration</a>
+      <a href="/docs/api.html">API</a>
+      <a href="/docs/aws-lambda.html">AWS Lambda</a>
+      <a href="https://github.com/kroofy/Pixtega">GitHub</a>
+    </nav>
   </div>
 </footer>
 </body>
