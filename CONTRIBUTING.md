@@ -43,6 +43,18 @@ cargo-mutants && cargo mutants`); configuration and exclusions live in
 [.cargo/mutants.toml](.cargo/mutants.toml), and the semantic-mutant manifest
 is in [docs/semantic-mutants.md](docs/semantic-mutants.md).
 
+## CI
+
+Every PR runs the CI workflow ([docs/ci.md](docs/ci.md)): the `check` job
+is `./scripts/check.sh` verbatim and the `container` job is
+`./scripts/container-acceptance.sh` verbatim, so a green local run means a
+green CI run. The SPEC.md ≥ 90% mutation-score requirement is enforced by
+the separate Mutants workflow (weekly on `main` + manual dispatch — it
+takes hours, so it does not gate PRs); after merging behavior changes,
+trigger it from the Actions tab to refresh the recorded score. Releases
+are cut with `git tag vX.Y.Z && git push origin vX.Y.Z`; see
+[docs/ci.md](docs/ci.md).
+
 ## Pull request expectations
 
 - `./scripts/check.sh` passes.
