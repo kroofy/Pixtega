@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pixtega — on-demand image derivation service</title>
-  <meta name="description" content="Pixtega fetches a source image from HTTP(S), the filesystem, or S3, derives a bounded variant, and returns cacheable image bytes. One URL per derived image.">
+  <title>Pixtega — on-demand image resizing</title>
+  <meta name="description" content="Pixtega resizes and re-encodes images when they're requested. WebP, AVIF, JPEG. Keep the original. Pixtega builds the sizes you allow.">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -22,12 +22,11 @@
 </header>
 
 <main>
-  <h1>Derive images on demand. Cache them forever.</h1>
+  <h1>Any size. Any format. One original.</h1>
   <p class="lead">
-    Pixtega is an open-source image derivation service written in Rust. It
-    fetches a source image from a configured backend — HTTP(S), the local
-    filesystem, or S3 — resizes and re-encodes it to a bounded variant, and
-    returns cacheable image bytes. Every derived image has exactly one URL.
+    Pixtega resizes and re-encodes images when they're requested. WebP,
+    AVIF, JPEG. It returns bytes a CDN can cache hard. Keep the original.
+    Pixtega builds the sizes you allow. No asset-pipeline ritual.
   </p>
 
   <div class="buttons">
@@ -35,72 +34,69 @@
     <a class="secondary" href="https://github.com/kroofy/Pixtega">View on GitHub</a>
   </div>
 
-  <h2>One URL, one derived image</h2>
+  <h2>One URL per image</h2>
   <pre><code>GET /images/public/photos/example.jpg/w1280.webp?v=7d91c2</code></pre>
   <p>
-    The mount (<code>public</code>) selects a configured source backend, the
-    path names the original, and the final segment is the transform:
-    <code>w{width}[,q{quality}].{format}</code>. Widths and qualities come
-    from closed allowlists, spelling out a default quality is rejected, and
-    the optional <code>v</code> token unlocks year-long immutable caching.
-    See the <a href="/docs/api.html">API reference</a> for the full grammar.
+    The mount (<code>public</code>) picks a configured source. The path
+    names the original. The last segment is the size and format:
+    <code>w{width}[,q{quality}].{format}</code>. Widths and qualities
+    come from allowlists. See the <a href="/docs/api.html">API reference</a>
+    for the full grammar. An optional <code>v</code> query param is for
+    cache busting when the original changes.
   </p>
 
   <h2>Why Pixtega</h2>
   <ul class="features">
     <li>
-      <strong>Bounded by design</strong>
-      Widths, formats, and qualities are closed allowlists in configuration.
-      Callers can never request an unbounded transform, and the service never
-      upscales a source image.
+      <strong>Keep the original.</strong>
+      You store one file. When a size is requested, Pixtega builds it. No
+      export script. No folder of thumbnails to keep in sync.
     </li>
     <li>
-      <strong>Three source transports</strong>
-      HTTP(S) origins, local filesystem roots, and S3 buckets — including
-      S3-compatible servers via a custom endpoint. Callers never see a
-      hostname, bucket, or directory, only a mount name.
+      <strong>You allow the sizes.</strong>
+      Widths, formats, and qualities are allowlists in the config. A
+      caller cannot invent a 10,000px request. The service never upscales.
     </li>
     <li>
-      <strong>Cache-first responses</strong>
-      Versioned successes are served with
-      <code>public, max-age=31536000, immutable</code>; unversioned successes
-      and 404s get configurable TTLs; every other error is
-      <code>no-store</code>. Built to sit behind a CDN.
+      <strong>One URL per image.</strong>
+      Same original, same size, same format: same path. Put it on a page
+      and leave it.
     </li>
     <li>
-      <strong>Strict input validation</strong>
-      Paths are decoded exactly once and strictly validated: no traversal, no
-      encoded delimiters, canonical percent-encoding only. Symlinks below a
-      filesystem root are always rejected.
+      <strong>Built to sit behind a CDN.</strong>
+      Successes come back with Cache-Control a CDN can honor. Errors are
+      no-store, so a failed request does not poison the cache.
     </li>
     <li>
-      <strong>Abuse limits built in</strong>
-      A source download size cap, a megapixel decode-bomb guard, a single
-      timeout over the whole source exchange, a redirect bound, and a
-      process-wide concurrency limit — all configurable, all with hard
-      ranges.
+      <strong>Sources stay behind mount names.</strong>
+      HTTP, the filesystem, or S3. Callers see a mount name. Never a
+      hostname, a bucket, or a directory.
     </li>
     <li>
-      <strong>Honest errors, structured logs</strong>
-      A precise error taxonomy (permission denied is 502, never a cacheable
-      404) and exactly one structured JSON completion event per request, with
-      a stable outcome from a closed set. Credentials and version tokens are
-      never logged.
+      <strong>Honest errors. Quiet logs.</strong>
+      Permission denied is a 502, not a cacheable 404. One structured
+      JSON line per request. Credentials stay out of the log.
+    </li>
+    <li>
+      <strong>Small to run.</strong>
+      One Rust binary or a Lambda image. TOML config. Encoders are
+      checked at startup, so a missing format fails the deploy instead
+      of the request.
     </li>
   </ul>
 
   <h2>Output formats</h2>
   <p>
     WebP, AVIF, and JPEG, each with its own default quality and quality
-    allowlist. Encoding is done with libvips, and every enabled encoder is
-    verified at startup — a deployment missing an encoder fails fast instead
-    of serving partial formats.
+    allowlist. Encoding uses libvips. Every enabled encoder is checked at
+    startup. A deploy missing an encoder fails then, not when the first
+    request asks for that format.
   </p>
 
   <div class="callout">
     The Rust crate and binary are also named <code>pixtega</code>.
-    The full behavioral contract — URL grammar, caching, errors — is
-    documented in the <a href="/docs/api.html">API reference</a> and the
+    URL grammar, caching, and errors are in the
+    <a href="/docs/api.html">API reference</a> and the
     <a href="https://github.com/kroofy/Pixtega/blob/main/README.md">README</a>.
   </div>
 </main>
