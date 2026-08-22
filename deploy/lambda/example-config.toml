@@ -1,0 +1,56 @@
+# Example configuration for running on AWS Lambda behind the Lambda Web
+# Adapter (see Dockerfile.lambda and deploy/lambda/README.md).
+#
+# Pass this whole document inline through the function's CONFIG environment
+# variable, or bake it into the image and point CONFIG_FILE at it.
+#
+# The Lambda Web Adapter forwards requests to 127.0.0.1:8080 by default,
+# so the listen address below must stay on port 8080 (or set AWS_LWA_PORT
+# to match a different port).
+
+listen_address = "0.0.0.0:8080"
+path_prefix = "/images"
+
+allowed_widths = [320, 640, 1280, 1920]
+
+max_download_bytes = 52428800
+max_source_megapixels = 100
+download_timeout_ms = 10000
+max_redirects = 3
+max_concurrent_derivations = 8
+unversioned_success_ttl_seconds = 3600
+not_found_ttl_seconds = 60
+
+[formats.webp]
+default_quality = 82
+allowed_qualities = [60, 72, 90]
+
+[formats.avif]
+default_quality = 55
+allowed_qualities = [40, 65]
+
+[formats.jpeg]
+default_quality = 85
+allowed_qualities = [70, 92]
+
+# The image bundles the repository fixtures at /app/fixtures, so this mount
+# works out of the box and is handy for a first smoke test:
+#   GET /images/fixtures/photos/example.jpg/w640.webp
+# With inline CONFIG the relative root resolves against the working
+# directory, which is /app in the image. Remove this mount in production.
+[[sources]]
+mount = "fixtures"
+key_prefix = ""
+transport = "filesystem"
+root = "./fixtures"
+
+# Typical production source: an S3 bucket read through the function's
+# execution role (credentials are never read from TOML). Replace bucket
+# and region, then grant the role s3:GetObject on the prefix — see
+# deploy/lambda/README.md for the IAM notes.
+[[sources]]
+mount = "photos"
+key_prefix = "originals"
+transport = "s3"
+bucket = "example-image-bucket"
+region = "us-east-1"
