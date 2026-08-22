@@ -1,6 +1,6 @@
 //! Error taxonomy.
 //!
-//! Three separate error classes, mirroring the specification:
+//! Three separate error classes:
 //!
 //! - [`RequestError`]: the request itself is invalid (all map to 400).
 //! - [`SourceError`]: fetching the Source Object failed (404/502/504).
@@ -13,7 +13,8 @@
 use std::fmt;
 
 /// Stable, low-cardinality request outcome for the completion log event.
-/// This is a closed set; do not add variants without updating SPEC.md.
+/// This is a closed set; do not add variants without updating the
+/// documented outcome set (README "Observability").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
     Success,

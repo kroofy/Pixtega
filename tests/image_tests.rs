@@ -1,4 +1,4 @@
-//! Image-processing contract tests (SPEC.md "Image tests").
+//! Image-processing contract tests.
 //!
 //! Every test drives the processor functions directly (no HTTP). All
 //! fixtures are generated in memory during the test run. Lossy output is

@@ -1,7 +1,8 @@
 # Semantic-mutant manifest
 
-SPEC.md defines a fixed suite of semantic mutations that the test suite
-must kill. This manifest maps each mutation to the public tests that fail
+The project maintains a fixed suite of semantic mutations — deliberate
+behavior-changing edits — that the test suite must kill. This manifest
+maps each mutation to the public tests that fail
 when it is introduced. Test names are `<file> :: <function>` under
 `tests/`.
 
@@ -31,5 +32,5 @@ when it is introduced. Test names are `<file> :: <function>` under
 - `src/processor.rs`: `ProcessError::Resize` is structurally unreachable in
   the fused-thumbnail design (decode and resize failures surface before a
   valid source is "accepted" and are classified `Undecodable`); the variant
-  exists because the spec's outcome set requires `resize_failed` to be
-  representable.
+  exists because the closed observability outcome set (README
+  "Observability") requires `resize_failed` to be representable.

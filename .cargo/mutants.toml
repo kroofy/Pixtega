@@ -3,7 +3,7 @@
 # Run with:  cargo mutants
 # (see docs/mutation-testing.md for the full procedure)
 #
-# Exclusions, with reasons as required by SPEC.md:
+# Exclusions, with reasons:
 # - src/main.rs: process bootstrap only (argument/env plumbing and exit
 #   codes); it contains no policy and is exercised by the end-to-end tests
 #   that spawn the real binary rather than by unit assertions.

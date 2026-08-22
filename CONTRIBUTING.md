@@ -1,8 +1,10 @@
 # Contributing to Pixtega
 
 Thanks for your interest in contributing. Pixtega (crate and binary name:
-`pixtega`) is an on-demand image derivation service; the normative
-behavioral contract is [SPEC.md](SPEC.md), and changes must stay within it.
+`pixtega`) is an on-demand image derivation service; its behavior (URL
+contract, caching, error taxonomy, configuration) is documented in the
+[README](README.md) and enforced by the test suite, and changes must stay
+within it.
 
 ## Building
 
@@ -58,9 +60,9 @@ are cut with `git tag vX.Y.Z && git push origin vX.Y.Z`; see
 ## Pull request expectations
 
 - `./scripts/check.sh` passes.
-- Behavior stays within [SPEC.md](SPEC.md). If a change genuinely requires
-  amending the contract, update SPEC.md in the same PR and say so
-  explicitly in the description.
+- Behavior stays within the documented contract ([README](README.md) and
+  `docs/`). If a change genuinely amends the contract, update the README
+  and docs in the same PR and say so explicitly in the description.
 - New behavior comes with tests. Error-path changes should map to the
   existing error taxonomy and outcome set rather than inventing new ones.
 - Documentation (README, `website/`, `deploy/`) is updated when
@@ -70,10 +72,6 @@ are cut with `git tag vX.Y.Z && git push origin vX.Y.Z`; see
 
 ## Repository notes
 
-- `SPEC.md` and `open-source-image-service-benchmark-spec.md` are currently
-  identical copies: the former is the project's contract, the latter is the
-  benchmark packaging of it. Treat `SPEC.md` as canonical; the duplicate is
-  kept intentionally for the benchmark and may be consolidated later.
 - The project name is Pixtega; the Rust crate and binary are named
   `pixtega`.
 

@@ -1,8 +1,8 @@
 //! TOML configuration: schema, parsing, and validation.
 //!
-//! The schema is closed: unknown fields are startup errors. Every rule in
-//! SPEC.md "Configuration" is enforced here so the rest of the application
-//! can trust an [`AppConfig`] completely.
+//! The schema is closed: unknown fields are startup errors. Every
+//! configuration validation rule is enforced here so the rest of the
+//! application can trust an [`AppConfig`] completely.
 //!
 //! Relative filesystem roots and CA certificate paths are resolved against
 //! the directory containing the configuration file, then canonicalized once

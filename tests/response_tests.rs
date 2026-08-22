@@ -1,4 +1,4 @@
-//! Response and error contract tests (SPEC.md "Response and error tests").
+//! Response and error contract tests.
 //!
 //! Drives the real router over a real listening socket: the app is built
 //! in-process (`build_router` + `axum::serve` on an ephemeral listener) and

@@ -8,5 +8,5 @@ npx wrangler deploy
 ```
 
 No build step. Edit the HTML files in `public/` directly. Content must stay
-grounded in the root [README](../README.md) and [SPEC.md](../SPEC.md); do not
+grounded in the root [README](../README.md) and the actual code; do not
 document behavior the service does not have.

@@ -9,8 +9,8 @@ configured Source (HTTP(S), filesystem, or S3), derives a bounded variant
 
 The Rust crate and binary are also named `pixtega`.
 
-The full contract lives in [SPEC.md](SPEC.md). This README covers running
-and operating the service.
+This README is the reference for the service's behavior and operation:
+URL contract, caching, error taxonomy, configuration, and deployment.
 
 ## Documentation
 
@@ -99,8 +99,8 @@ cannot be cached as "missing".
 TOML, passed as the first CLI argument or via `CONFIG_FILE` (inline TOML
 via `CONFIG` is also supported). The schema is closed: unknown fields stop
 startup, as does any invalid value. See [config.example.toml](config.example.toml)
-for the full annotated shape and [SPEC.md](SPEC.md#configuration) for every
-validation rule.
+for the full annotated shape; every validation rule is enforced at startup
+with a specific error message.
 
 Key limits:
 
