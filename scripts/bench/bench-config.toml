@@ -1,0 +1,38 @@
+# Benchmark configuration: serves bench/fixtures via filesystem and via a
+# local HTTP fixture server (started by bench.py on 127.0.0.1:8091).
+listen_address = "127.0.0.1:8090"
+path_prefix = "/images"
+
+allowed_widths = [320, 640, 1280, 1920]
+
+max_download_bytes = 104857600
+max_source_megapixels = 100
+download_timeout_ms = 30000
+max_redirects = 3
+max_concurrent_derivations = 8
+unversioned_success_ttl_seconds = 3600
+not_found_ttl_seconds = 60
+
+[formats.webp]
+default_quality = 82
+allowed_qualities = [60, 72, 90]
+
+[formats.avif]
+default_quality = 55
+allowed_qualities = [40, 65]
+
+[formats.jpeg]
+default_quality = 85
+allowed_qualities = [70, 92]
+
+[[sources]]
+mount = "fs"
+key_prefix = ""
+transport = "filesystem"
+root = "../../bench/fixtures"
+
+[[sources]]
+mount = "http"
+key_prefix = ""
+transport = "http"
+base_url = "http://127.0.0.1:8091"
