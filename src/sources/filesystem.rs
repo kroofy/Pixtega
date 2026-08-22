@@ -108,7 +108,7 @@ fn fetch_blocking(
 /// Read the file in chunks, enforcing the byte limit again while reading
 /// (the metadata check above may not reflect the bytes actually read).
 fn read_limited(path: &Path, max_bytes: u64) -> Result<FetchedObject, SourceError> {
-    let mut file = match std::fs::File::open(path) {
+    let file = match std::fs::File::open(path) {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Err(SourceError::NotFound {
@@ -117,11 +117,17 @@ fn read_limited(path: &Path, max_bytes: u64) -> Result<FetchedObject, SourceErro
         }
         Err(_) => return Err(unavailable("filesystem open failed")),
     };
+    read_all_limited(file, max_bytes)
+}
 
+/// The chunked read loop, split from the file open so the `Interrupted`
+/// retry and the streaming byte limit can be exercised with an arbitrary
+/// reader.
+fn read_all_limited(mut reader: impl Read, max_bytes: u64) -> Result<FetchedObject, SourceError> {
     let mut bytes: Vec<u8> = Vec::new();
     let mut chunk = [0u8; READ_CHUNK_BYTES];
     loop {
-        let read = match file.read(&mut chunk) {
+        let read = match reader.read(&mut chunk) {
             Ok(read) => read,
             Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => return Err(unavailable("filesystem read failed")),
@@ -141,4 +147,132 @@ fn read_limited(path: &Path, max_bytes: u64) -> Result<FetchedObject, SourceErro
         bytes,
         upstream_status: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A reader that yields scripted results, then EOF.
+    struct ScriptedReader {
+        script: Vec<Result<Vec<u8>, std::io::ErrorKind>>,
+    }
+
+    impl Read for ScriptedReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.script.is_empty() {
+                return Ok(0);
+            }
+            match self.script.remove(0) {
+                Ok(data) => {
+                    buf[..data.len()].copy_from_slice(&data);
+                    Ok(data.len())
+                }
+                Err(kind) => Err(std::io::Error::from(kind)),
+            }
+        }
+    }
+
+    fn assert_unavailable(result: Result<FetchedObject, SourceError>, what: &str) {
+        assert!(
+            matches!(result, Err(SourceError::Unavailable { .. })),
+            "{what}: expected Unavailable, got {result:?}"
+        );
+    }
+
+    /// An `Interrupted` read is retried transparently; the data still
+    /// arrives. Any other read error is unavailability, even when a retry
+    /// would have produced data.
+    #[test]
+    fn interrupted_reads_are_retried_and_other_errors_are_unavailable() {
+        let fetched = read_all_limited(
+            ScriptedReader {
+                script: vec![
+                    Err(std::io::ErrorKind::Interrupted),
+                    Ok(b"abc".to_vec()),
+                    Err(std::io::ErrorKind::Interrupted),
+                    Ok(b"def".to_vec()),
+                ],
+            },
+            1024,
+        )
+        .expect("interrupted reads must be retried");
+        assert_eq!(fetched.bytes, b"abcdef");
+
+        assert_unavailable(
+            read_all_limited(
+                ScriptedReader {
+                    script: vec![
+                        Err(std::io::ErrorKind::PermissionDenied),
+                        Ok(b"abc".to_vec()),
+                    ],
+                },
+                1024,
+            ),
+            "non-Interrupted read error",
+        );
+    }
+
+    /// The streaming limit is enforced on cumulative bytes: a first chunk
+    /// alone may exceed it, and the boundary itself is accepted.
+    #[test]
+    fn streaming_byte_limit_is_cumulative_and_inclusive() {
+        let over = read_all_limited(
+            ScriptedReader {
+                script: vec![Ok(b"12345".to_vec())],
+            },
+            4,
+        );
+        assert!(
+            matches!(over, Err(SourceError::TooLarge { .. })),
+            "5 bytes against a limit of 4 must be TooLarge, got {over:?}"
+        );
+
+        let exact = read_all_limited(
+            ScriptedReader {
+                script: vec![Ok(b"12".to_vec()), Ok(b"34".to_vec())],
+            },
+            4,
+        )
+        .expect("exactly max_bytes must be accepted");
+        assert_eq!(exact.bytes, b"1234");
+    }
+
+    /// Open errors: absence maps to NotFound; any other open failure (here
+    /// an invalid path with an embedded NUL) maps to unavailability, never
+    /// to absence.
+    #[test]
+    fn open_errors_distinguish_absence_from_unavailability() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = read_limited(&dir.path().join("missing.jpg"), 1024);
+        assert!(
+            matches!(
+                missing,
+                Err(SourceError::NotFound {
+                    upstream_status: None
+                })
+            ),
+            "missing file must be NotFound, got {missing:?}"
+        );
+        assert_unavailable(
+            read_limited(&dir.path().join("nul\0byte"), 1024),
+            "invalid path open error",
+        );
+    }
+
+    /// Metadata errors during the walk that are not NotFound (here an
+    /// invalid path with an embedded NUL) are unavailability, not absence.
+    #[test]
+    fn metadata_errors_other_than_absence_are_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        let limits = FetchLimits {
+            max_bytes: 1024,
+            timeout: std::time::Duration::from_secs(1),
+            max_redirects: 0,
+        };
+        assert_unavailable(
+            fetch_blocking(dir.path(), &["nul\0byte".to_string()], &limits),
+            "invalid path metadata error",
+        );
+    }
 }

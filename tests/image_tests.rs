@@ -586,6 +586,106 @@ fn avif_with_mif1_major_brand_is_accepted() {
     );
 }
 
+/// The explicit quality must reach the WebP and AVIF encoders: noisy
+/// content encoded at a high quality is strictly larger than at a low
+/// quality. (JPEG is covered by `quality_parameter_reaches_the_encoder`.)
+#[test]
+fn quality_parameter_reaches_the_webp_and_avif_encoders() {
+    init_vips();
+    let source = encode_jpeg(&noise_rgb(256, 256));
+    for (format, low_q, high_q) in [(OutputFormat::Webp, 60, 92), (OutputFormat::Avif, 30, 90)] {
+        let low = process_image(&source, &tf(256, format, low_q), MP).unwrap();
+        let high = process_image(&source, &tf(256, format, high_q), MP).unwrap();
+        assert!(
+            high.len() > low.len(),
+            "{format}: noisy content at q{high_q} ({} bytes) must be larger than at q{low_q} ({} bytes)",
+            high.len(),
+            low.len()
+        );
+    }
+}
+
+/// AVIF output is encoded at 8-bit depth: decoding it yields 8-bit bands
+/// (a 10/12-bit encode would decode to ushort bands).
+#[test]
+fn avif_output_is_eight_bit() {
+    init_vips();
+    let out = process_image(
+        &jpeg_fixture(300, 200),
+        &tf(300, OutputFormat::Avif, 55),
+        MP,
+    )
+    .unwrap();
+    let img = VipsImage::new_from_buffer(&out, "").expect("output AVIF must load");
+    let format = img.get_format();
+    assert!(
+        matches!(format, Ok(libvips::ops::BandFormat::Uchar)),
+        "AVIF output must decode to 8-bit bands, got {format:?}"
+    );
+}
+
+/// Source metadata is stripped from WebP and AVIF outputs too (the JPEG
+/// case is asserted in the EXIF orientation test).
+#[test]
+fn webp_and_avif_outputs_strip_source_metadata() {
+    init_vips();
+    let source = with_exif_orientation(&jpeg_fixture(100, 50), 1);
+    for format in [OutputFormat::Webp, OutputFormat::Avif] {
+        let out = process_image(&source, &tf(100, format, 80), MP).unwrap();
+        assert!(
+            !out.windows(4).any(|w| w.eq_ignore_ascii_case(b"Exif")),
+            "{format}: output must not contain an EXIF block"
+        );
+    }
+}
+
+/// The VP8X animation-flag check applies to WebP sources only. A valid
+/// JPEG carrying a comment segment that happens to spell "VP8X" (with the
+/// animation bit set) at the WebP header offsets must still be processed.
+#[test]
+fn vp8x_animation_check_applies_only_to_webp_sources() {
+    init_vips();
+    let jpeg = jpeg_fixture(64, 32);
+    let mut payload = vec![0u8; 16];
+    payload[6..10].copy_from_slice(b"VP8X");
+    payload[14] = 0x02; // where a WebP VP8X animation flag would live
+    let mut crafted = Vec::new();
+    crafted.extend_from_slice(&jpeg[..2]); // SOI
+    crafted.extend_from_slice(&[0xFF, 0xFE]); // COM marker
+    crafted.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+    crafted.extend_from_slice(&payload);
+    crafted.extend_from_slice(&jpeg[2..]);
+    assert_eq!(
+        &crafted[12..16],
+        b"VP8X",
+        "fixture must mimic a VP8X header"
+    );
+    assert_ne!(
+        crafted[20] & 0x02,
+        0,
+        "fixture must mimic the animation bit"
+    );
+
+    let out = process_image(&crafted, &tf(32, OutputFormat::Webp, 80), MP)
+        .expect("a JPEG mimicking VP8X offsets must still be processed");
+    assert_eq!(decode_with_image_crate(&out).dimensions(), (32, 16));
+}
+
+/// Animated WebP is rejected by the page-count metadata check (the VP8X
+/// flag is a fallback): the rejection must name multi-page input.
+#[test]
+fn animated_webp_is_rejected_by_the_page_count_check() {
+    init_vips();
+    let animated = animated_webp_fixture();
+    match process_image(&animated, &tf(320, OutputFormat::Jpeg, 85), MP) {
+        Err(ProcessError::Undecodable { detail }) => assert_eq!(
+            detail, "animated or multi-page input",
+            "animated WebP must be rejected by the page-count check first"
+        ),
+        other => panic!("expected Undecodable, got {other:?}"),
+    }
+}
+
 #[test]
 fn verify_encoders_succeeds_for_every_enabled_format() {
     init_vips();

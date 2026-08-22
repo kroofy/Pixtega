@@ -524,6 +524,29 @@ async fn content_encoding_other_than_identity_is_unavailable() {
     }
 }
 
+/// A connection that dies mid-body (fewer bytes than Content-Length, then
+/// close) is unavailability, reported with the body-read detail — the terse
+/// mapping distinguishes body failures from connect/request failures.
+#[tokio::test]
+async fn body_shorter_than_content_length_is_an_unavailable_body_read_failure() {
+    let raw = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n";
+    let mut bytes = raw.as_bytes().to_vec();
+    bytes.extend_from_slice(b"only-ten-b");
+    let fixture = Fixture::start(HashMap::from([(
+        "/img.jpg".to_string(),
+        Script::Bytes(bytes),
+    )]))
+    .await;
+    let source = adapter(&fixture.url(""), None, default_limits());
+    let err = source.fetch(&key(&["img.jpg"])).await.unwrap_err();
+    match err {
+        SourceError::Unavailable { detail, .. } => {
+            assert_eq!(detail, "upstream body read failed");
+        }
+        other => panic!("expected Unavailable, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn explicit_identity_content_encoding_is_accepted() {
     let body = b"plain";
