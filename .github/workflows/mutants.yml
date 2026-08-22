@@ -1,0 +1,91 @@
+# Authoritative mutation score for the SPEC.md requirement of a >= 90%
+# mutation score (SPEC.md, "Test design and mutation resilience").
+#
+# A full cargo-mutants run rebuilds and retests the crate once per mutant
+# and can take hours, so it does NOT gate pull requests (see ci.yml for the
+# fast gate). It runs:
+#   - weekly on main (cron), and
+#   - on demand via workflow_dispatch (run it from the Actions tab after
+#     merging behavior changes to refresh the recorded score).
+#
+# Outputs, per run:
+#   - job summary: score table + verdict (durable on the run page)
+#   - artifact "mutants-report": mutants.out/ (missed/caught/timeout lists,
+#     diffs, outcomes.json) + mutants-score.json (machine-readable score,
+#     counts, git SHA, timestamp)
+#   - exit status: the run FAILS if the score is below 90%.
+#
+# Mutant selection and timeouts come from the checked-in .cargo/mutants.toml
+# (src/main.rs excluded with a written reason; generous bounded timeouts).
+#
+# Runtime budget: timeout-minutes is set just under the 360-minute
+# GitHub-hosted job hard limit. If the suite outgrows it, split the run with
+# cargo-mutants --shard across parallel jobs (see docs/ci.md).
+
+name: Mutants
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, Monday 03:17 UTC, on the default branch (main).
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  mutants:
+    name: cargo mutants (full suite, scored)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install libvips and AVIF encoder plugins
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libheif-plugin-aomdec \
+            libheif-plugin-aomenc \
+            libvips-dev \
+            pkg-config
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+
+      # Exit codes 2 (missed mutants) and 3 (timeouts) are expected data,
+      # not infrastructure failures; the scoring step below decides
+      # pass/fail against the 90% threshold. Anything else (baseline test
+      # failure, internal error) fails immediately.
+      - name: Run cargo mutants
+        run: |
+          set +e
+          cargo mutants --jobs 2
+          code=$?
+          set -e
+          case "$code" in
+            0|2|3) echo "cargo mutants finished (exit $code); scoring next" ;;
+            *) echo "cargo mutants infrastructure/baseline failure (exit $code)" >&2
+               exit "$code" ;;
+          esac
+
+      - name: Score against the SPEC threshold (>= 90%)
+        run: python3 .github/scripts/mutants-score.py
+
+      - name: Upload mutants report and score
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-report
+          path: |
+            mutants.out
+            mutants-score.json
+          if-no-files-found: error
