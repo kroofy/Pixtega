@@ -232,7 +232,7 @@ Full details in [docs/ci.md](docs/ci.md).
 
 - **CI** runs `./scripts/check.sh` and
   `./scripts/container-acceptance.sh` on every PR and push to `main`.
-- **Mutation score**: SPEC.md requires ≥ 90%. The Mutants workflow
+- **Mutation score**: the project threshold is ≥ 90%. The Mutants workflow
   (weekly on `main` + manual dispatch) runs the full `cargo mutants`
   suite, publishes the score in the run's job summary and a
   `mutants-report` artifact (`mutants-score.json` + the full

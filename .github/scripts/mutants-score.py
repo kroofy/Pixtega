@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Score a cargo-mutants run against the project threshold of >= 90%.
+"""Score a cargo-mutants run against the project >= 90% threshold.
 
 Reads the mutants.out/ directory that `cargo mutants` writes next to the
 workspace root, computes

@@ -50,7 +50,7 @@ is in [docs/semantic-mutants.md](docs/semantic-mutants.md).
 Every PR runs the CI workflow ([docs/ci.md](docs/ci.md)): the `check` job
 is `./scripts/check.sh` verbatim and the `container` job is
 `./scripts/container-acceptance.sh` verbatim, so a green local run means a
-green CI run. The SPEC.md ≥ 90% mutation-score requirement is enforced by
+green CI run. The project mutation-score threshold (≥ 90%) is enforced by
 the separate Mutants workflow (weekly on `main` + manual dispatch — it
 takes hours, so it does not gate PRs); after merging behavior changes,
 trigger it from the Actions tab to refresh the recorded score. Releases
