@@ -34,22 +34,22 @@ exclude_re = [
     # swap only exchanges the operands of a commutative checked
     # multiplication; the pixel-limit comparison is unchanged either way.
     "processor\\.rs.*replace >= with < in process_image",
-    # processor.rs ThumbnailBufferOptions: `no_rotate: false` equals the
-    # crate default; the field is spelled out to document the auto-rotate
-    # decision, so deleting it is a no-op.
-    "processor\\.rs.*delete field no_rotate from struct ThumbnailBufferOptions",
-    # processor.rs ThumbnailBufferOptions: the `import_profile` fallback
-    # only engages for profile-less sources that need colour management;
-    # verified empirically (CMYK JPEG and 16-bit PNG probes) that "" and
-    # "srgb" produce identical results on this libvips build for every
-    # accepted input. Kept as belt and braces for exotic builds.
-    "processor\\.rs.*delete field import_profile from struct ThumbnailBufferOptions",
     # filesystem.rs READ_CHUNK_BYTES `64 * 1024`: the chunk size is a
     # performance knob; any positive size preserves the streaming byte
     # limit and the returned bytes (64 + 1024 = 1088 is merely slower).
     # The `*`->`/` variant (a zero-sized chunk) IS caught by tests.
     "filesystem\\.rs.*replace \\* with \\+",
 ]
+
+# Known-equivalent mutant that CANNOT be excluded: cargo-mutants (verified
+# on 27.1.0) does not apply --re/--exclude-re filters to delete-field
+# mutants, so this one is documented here and expected to appear as MISSED:
+# - processor.rs `delete field import_profile from struct
+#   ThumbnailBufferOptions`: the fallback import profile only engages for
+#   profile-less sources that need colour management; verified empirically
+#   (real CMYK JPEG and 16-bit PNG probes) that "" and "srgb" produce
+#   byte-identical output on this libvips build for every accepted input.
+#   The explicit value is kept as belt and braces for other libvips builds.
 
 # Integration tests spawn fixture servers and encode images; give mutants a
 # generous but bounded timeout so hangs are killed.

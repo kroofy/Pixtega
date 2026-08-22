@@ -31,12 +31,15 @@ there. Summary:
   reaches the check with only one bad axis.
 - `processor.rs` orientation `>= 5` swap: only exchanges the operands of a
   commutative checked multiplication.
-- `processor.rs` `no_rotate: false` field delete: equals the crate default.
-- `processor.rs` `import_profile` field delete: the fallback profile is
-  observably inert for every accepted input on this libvips build
-  (verified with CMYK JPEG and 16-bit PNG probes).
 - `filesystem.rs` `READ_CHUNK_BYTES` `64 * 1024`→`64 + 1024`: chunk size is
   a performance knob; the byte limit and returned bytes are unchanged.
+
+One known-equivalent mutant cannot be excluded because cargo-mutants does
+not apply `exclude_re` to delete-field mutants (verified on 27.1.0), so it
+is expected to appear as MISSED in every run: the `import_profile` field
+delete in `processor.rs` (the fallback import profile is observably inert —
+byte-identical output — for every accepted input on this libvips build;
+verified with real CMYK JPEG and 16-bit PNG probes).
 
 The libvips native bindings are an external crate (`libvips`), so they are
 outside the mutation target by construction.

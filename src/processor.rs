@@ -202,11 +202,12 @@ pub fn process_image(
     //   so corrupt input would decode partially. Passing `fail-on=error`
     //   through the loader option string does work; corrupt or truncated
     //   pixel data then errors at evaluation time below.
+    // `no_rotate` is left at its default `false`: EXIF orientation is
+    // applied before the resize.
     let thumb_options = ThumbnailBufferOptions {
         option_string: "fail-on=error".to_string(),
         height: 10_000_000,
         size: Size::Down,
-        no_rotate: false,
         import_profile: "srgb".to_string(),
         export_profile: "srgb".to_string(),
         ..ThumbnailBufferOptions::default()
