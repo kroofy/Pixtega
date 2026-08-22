@@ -367,3 +367,141 @@ fn take_vips_error_buffer() -> String {
         message
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+
+    // ------------------------------------------------ container sniffing
+
+    /// Build an ISO-BMFF `ftyp` box: 4-byte length, "ftyp", major brand,
+    /// minor version, compatible brands.
+    fn ftyp(major: &[u8; 4], compatible: &[&[u8; 4]]) -> Vec<u8> {
+        let len = 16 + 4 * compatible.len();
+        let mut out = Vec::with_capacity(len);
+        out.extend_from_slice(&(len as u32).to_be_bytes());
+        out.extend_from_slice(b"ftyp");
+        out.extend_from_slice(major);
+        out.extend_from_slice(&0u32.to_be_bytes());
+        for brand in compatible {
+            out.extend_from_slice(*brand);
+        }
+        out
+    }
+
+    #[test]
+    fn avif_brand_accepts_major_and_compatible_brands() {
+        assert!(is_avif_brand(&ftyp(b"avif", &[])));
+        assert!(is_avif_brand(&ftyp(b"avis", &[])));
+        assert!(is_avif_brand(&ftyp(b"mif1", &[b"miaf", b"avif"])));
+        assert!(!is_avif_brand(&ftyp(b"heic", &[b"mif1"])));
+        assert!(!is_avif_brand(&ftyp(b"mif1", &[b"heic"])));
+    }
+
+    /// A `ftyp` box with no compatible brands is exactly 16 bytes: the
+    /// shortest input that can declare an AVIF major brand.
+    #[test]
+    fn avif_brand_accepts_the_minimum_sixteen_byte_box() {
+        let minimal = ftyp(b"avif", &[]);
+        assert_eq!(minimal.len(), 16);
+        assert!(is_avif_brand(&minimal));
+    }
+
+    /// Boxes truncated below 16 bytes are rejected even when the bytes
+    /// present spell `ftyp` and an AVIF brand: the minor version field is
+    /// incomplete, so the container is malformed.
+    #[test]
+    fn avif_brand_rejects_truncated_boxes_and_missing_ftyp() {
+        let truncated: Vec<u8> = ftyp(b"avif", &[])[..12].to_vec();
+        assert_eq!(&truncated[4..8], b"ftyp");
+        assert_eq!(&truncated[8..12], b"avif");
+        assert!(!is_avif_brand(&truncated));
+        assert!(!is_avif_brand(b""));
+        assert!(!is_avif_brand(b"RIFF1234WEBPVP8 aaaa"));
+    }
+
+    /// A minimal RIFF/VP8X prefix: `webp_vp8x_animated` reads only the
+    /// chunk fourcc at 12..16 and the flag byte at 20.
+    fn vp8x_prefix(fourcc: &[u8; 4], flags: u8) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(b"WEBP");
+        out.extend_from_slice(fourcc);
+        out.extend_from_slice(&10u32.to_le_bytes());
+        out.push(flags);
+        out
+    }
+
+    #[test]
+    fn vp8x_animation_flag_detection() {
+        assert_eq!(vp8x_prefix(b"VP8X", 0x02).len(), 21);
+        assert!(webp_vp8x_animated(&vp8x_prefix(b"VP8X", 0x02)));
+        // Other VP8X feature bits alongside animation still count.
+        assert!(webp_vp8x_animated(&vp8x_prefix(b"VP8X", 0x3E)));
+        // Animation bit clear: extended header without animation.
+        assert!(!webp_vp8x_animated(&vp8x_prefix(b"VP8X", 0x00)));
+        assert!(!webp_vp8x_animated(&vp8x_prefix(b"VP8X", 0x3C)));
+        // Simple lossy WebP: no VP8X chunk at all.
+        assert!(!webp_vp8x_animated(&vp8x_prefix(b"VP8 ", 0x02)));
+        // Exactly 20 bytes: the flag byte does not exist yet.
+        assert!(!webp_vp8x_animated(&vp8x_prefix(b"VP8X", 0x02)[..20]));
+        assert!(!webp_vp8x_animated(b""));
+    }
+
+    // ------------------------------------------------ vips error plumbing
+
+    /// The libvips error buffer is process-global; tests that touch it must
+    /// not interleave with each other.
+    static VIPS_ERROR_BUFFER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Push `message` into the process-global libvips error buffer.
+    fn set_vips_error(message: &str) {
+        let domain = CString::new("pixtega-test").unwrap();
+        let fmt = CString::new("%s").unwrap();
+        let text = CString::new(message).unwrap();
+        unsafe {
+            bindings::vips_error(domain.as_ptr(), fmt.as_ptr(), text.as_ptr());
+        }
+    }
+
+    #[test]
+    fn take_vips_error_buffer_returns_and_clears_the_message() {
+        init_vips();
+        let _guard = VIPS_ERROR_BUFFER_LOCK.lock().unwrap();
+        let _ = take_vips_error_buffer(); // drain anything left behind
+        set_vips_error("buffered diagnostic");
+        let taken = take_vips_error_buffer();
+        assert!(
+            taken.contains("buffered diagnostic"),
+            "buffer content must be returned, got {taken:?}"
+        );
+        assert_eq!(
+            take_vips_error_buffer(),
+            "",
+            "the buffer must be cleared by the first take"
+        );
+    }
+
+    #[test]
+    fn describe_vips_error_includes_binding_error_and_buffer() {
+        init_vips();
+        let _guard = VIPS_ERROR_BUFFER_LOCK.lock().unwrap();
+        let err = VipsImage::new_from_buffer(b"not an image", "")
+            .expect_err("garbage bytes must not load");
+        let _ = take_vips_error_buffer(); // drain: exercise the empty case
+        assert_eq!(describe_vips_error(&err), err.to_string());
+
+        set_vips_error("extra context");
+        let described = describe_vips_error(&err);
+        assert!(
+            described.starts_with(&err.to_string()),
+            "description must start with the binding error, got {described:?}"
+        );
+        assert!(
+            described.contains("extra context"),
+            "description must include the buffer content, got {described:?}"
+        );
+    }
+}

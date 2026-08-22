@@ -9,6 +9,48 @@
 #   that spawn the real binary rather than by unit assertions.
 exclude_globs = ["src/main.rs"]
 
+# Individually excluded mutants. Every entry is a mutant verified to be
+# behaviorally equivalent to the original program (no observable difference
+# through any public interface), with the reasoning written down here.
+exclude_re = [
+    # request.rs validate_and_decode_segment: `decoded == b'/' || == b'\\'`
+    # and `decoded == "." || == ".."` are the first line of two redundant
+    # defenses; reject_double_encoded_traversal() rejects exactly the same
+    # inputs with the same RequestError::InvalidSourcePath afterwards, so
+    # degrading either `||` to `&&` is not observable. The early checks are
+    # kept for clarity and defense in depth.
+    "request\\.rs.*replace \\|\\| with && in validate_and_decode_segment",
+    # request.rs parse_transform: the `!format.contains('.')` match guard
+    # rejects dotted formats early; OutputFormat::from_canonical() rejects
+    # every dotted string anyway with the same InvalidTransform, so forcing
+    # the guard to true is not observable.
+    "request\\.rs.*replace match guard !format\\.contains\\('\\.'\\) with true in parse_transform",
+    # processor.rs process_image `width <= 0 || height <= 0`: libvips fails
+    # the header open before ever reporting a non-positive dimension
+    # (verified with a JPEG whose SOF height is patched to 0), so no
+    # constructible input reaches this check with only one bad axis.
+    "processor\\.rs.*replace \\|\\| with && in process_image",
+    # processor.rs process_image `get_orientation() >= 5`: the orientation
+    # swap only exchanges the operands of a commutative checked
+    # multiplication; the pixel-limit comparison is unchanged either way.
+    "processor\\.rs.*replace >= with < in process_image",
+    # processor.rs ThumbnailBufferOptions: `no_rotate: false` equals the
+    # crate default; the field is spelled out to document the auto-rotate
+    # decision, so deleting it is a no-op.
+    "processor\\.rs.*delete field no_rotate from struct ThumbnailBufferOptions",
+    # processor.rs ThumbnailBufferOptions: the `import_profile` fallback
+    # only engages for profile-less sources that need colour management;
+    # verified empirically (CMYK JPEG and 16-bit PNG probes) that "" and
+    # "srgb" produce identical results on this libvips build for every
+    # accepted input. Kept as belt and braces for exotic builds.
+    "processor\\.rs.*delete field import_profile from struct ThumbnailBufferOptions",
+    # filesystem.rs READ_CHUNK_BYTES `64 * 1024`: the chunk size is a
+    # performance knob; any positive size preserves the streaming byte
+    # limit and the returned bytes (64 + 1024 = 1088 is merely slower).
+    # The `*`->`/` variant (a zero-sized chunk) IS caught by tests.
+    "filesystem\\.rs.*replace \\* with \\+",
+]
+
 # Integration tests spawn fixture servers and encode images; give mutants a
 # generous but bounded timeout so hangs are killed.
 timeout_multiplier = 3.0

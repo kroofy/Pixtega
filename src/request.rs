@@ -403,6 +403,14 @@ mod tests {
         }
     }
 
+    /// The second-decoding scan must not read past the end of the segment:
+    /// a `%` followed by fewer than two bytes is passed through literally.
+    #[test]
+    fn trailing_percent_triplet_fragments_pass_through() {
+        assert_eq!(validate_and_decode_segment("%254"), Ok("%4".to_string()));
+        assert_eq!(validate_and_decode_segment("a%25"), Ok("a%".to_string()));
+    }
+
     #[test]
     fn segment_rejects_double_encoded_traversal() {
         for raw in [
@@ -506,6 +514,56 @@ mod tests {
         assert_eq!(parse_query(Some("foo")), Err(RequestError::InvalidQuery));
         assert_eq!(parse_query(Some("v=1&")), Err(RequestError::InvalidQuery));
         assert_eq!(parse_query(Some("&v=1")), Err(RequestError::InvalidQuery));
+    }
+
+    /// 16384 and 100 are the largest configurable width and quality; when
+    /// configured they must be served. Larger canonical decimals are
+    /// disallowed values — including ones whose low 32 bits spell an
+    /// allowed value (2^32 + 320, 2^32 + 60): truncation must never let
+    /// them through.
+    #[test]
+    fn width_and_quality_caps_are_inclusive_and_never_truncate() {
+        let mut cfg = test_config();
+        cfg.allowed_widths.push(16384);
+        cfg.formats
+            .get_mut(&OutputFormat::Webp)
+            .unwrap()
+            .allowed_qualities
+            .push(100);
+
+        let resolved = parse_request(&cfg, "/images/public/a/w16384.webp", None).unwrap();
+        assert_eq!(resolved.transform.width, 16384);
+        let resolved = parse_request(&cfg, "/images/public/a/w320,q100.webp", None).unwrap();
+        assert_eq!(resolved.transform.quality, 100);
+
+        for (path, err) in [
+            (
+                "/images/public/a/w16385.webp",
+                RequestError::DisallowedWidth,
+            ),
+            (
+                "/images/public/a/w4294967616.webp",
+                RequestError::DisallowedWidth,
+            ),
+            (
+                "/images/public/a/w18446744073709551617.webp",
+                RequestError::DisallowedWidth,
+            ),
+            (
+                "/images/public/a/w320,q101.webp",
+                RequestError::DisallowedQuality,
+            ),
+            (
+                "/images/public/a/w320,q4294967356.webp",
+                RequestError::DisallowedQuality,
+            ),
+            (
+                "/images/public/a/w320,q18446744073709551617.webp",
+                RequestError::DisallowedQuality,
+            ),
+        ] {
+            assert_eq!(parse_request(&cfg, path, None), Err(err), "path {path:?}");
+        }
     }
 
     #[test]

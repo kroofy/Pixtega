@@ -436,6 +436,61 @@ async fn body_exactly_at_the_limit_is_fetched() {
     assert_eq!(fetched.bytes.len(), 1024);
 }
 
+/// A zero-length object is a valid object: an advertised Content-Length of
+/// 0 is within any limit and must not be misread as too large (it is left
+/// to the processor to reject empty bytes as undecodable).
+#[tokio::test]
+async fn empty_object_is_fetched() {
+    let fake = FakeS3::start(HashMap::from([(
+        format!("/{BUCKET}/empty.bin"),
+        Script::Bytes(object_response(b"")),
+    )]))
+    .await;
+
+    let source = adapter(&fake, default_limits()).await;
+    let fetched = source
+        .fetch(&key(&["empty.bin"]))
+        .await
+        .expect("zero-length object must be fetched");
+    assert!(fetched.bytes.is_empty());
+    assert_eq!(fetched.upstream_status, Some(200));
+}
+
+/// A connection that cannot be established at all (nothing listens on the
+/// endpoint) is a dispatch failure: unavailability with no upstream status
+/// and the dispatch-specific detail, never absence and never a timeout.
+#[tokio::test]
+async fn connection_refused_is_an_unavailable_dispatch_failure() {
+    setup_test_credentials();
+    // Bind and immediately drop a listener to get a port that refuses.
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let config = S3SourceConfig {
+        mount: "archive".to_string(),
+        key_prefix_segments: Vec::new(),
+        bucket: BUCKET.to_string(),
+        region: "us-east-1".to_string(),
+        endpoint_url: Some(Url::parse(&format!("http://127.0.0.1:{port}")).unwrap()),
+        force_path_style: true,
+    };
+    let source = S3Source::new(&config, default_limits())
+        .await
+        .expect("adapter construction");
+    let err = source.fetch(&key(&["photo.jpg"])).await.unwrap_err();
+    match err {
+        SourceError::Unavailable {
+            upstream_status,
+            detail,
+        } => {
+            assert_eq!(upstream_status, None);
+            assert_eq!(detail, "s3 dispatch failure");
+        }
+        other => panic!("expected Unavailable, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn stalling_server_maps_to_timeout() {
     let fake = FakeS3::start(HashMap::from([(

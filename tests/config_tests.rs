@@ -419,6 +419,23 @@ fn invalid_mount_names_are_rejected() {
     load(&config_with(&[], FORMATS, &sources)).expect("32-character mount is valid");
 }
 
+/// The full documented mount alphabet is valid after the first letter:
+/// digits and hyphens, not only lowercase letters.
+#[test]
+fn mount_names_with_digits_and_hyphens_are_valid() {
+    for mount in ["cdn2", "a-1", "img-archive-01", "p0-q1-r2"] {
+        let sources = format!(
+            "[[sources]]\nmount = \"{mount}\"\ntransport = \"http\"\nbase_url = \"https://x.example.test\"\n"
+        );
+        let config = load(&config_with(&[], FORMATS, &sources))
+            .unwrap_or_else(|err| panic!("mount {mount:?} must be valid: {err}"));
+        assert!(
+            config.source_for_mount(mount).is_some(),
+            "mount {mount:?} must be registered"
+        );
+    }
+}
+
 #[test]
 fn duplicate_mounts_are_rejected() {
     let sources = format!("{}\n{}", http_source(""), http_source(""));

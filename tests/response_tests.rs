@@ -531,6 +531,32 @@ async fn absolute_form_targets_over_8192_bytes_are_rejected() {
     assert_eq!(response.status, 200);
 }
 
+/// The 8192-byte request-target limit is exclusive: a target of exactly
+/// 8192 bytes passes the length gate (and fails later as absence, since the
+/// named file does not exist); one more byte is rejected as overlong.
+#[tokio::test]
+async fn a_target_of_exactly_8192_bytes_passes_the_length_gate() {
+    // An HTTP Source (whose fixture answers 404 for unknown paths) rather
+    // than a filesystem Source: an 8000-byte file name would trip local
+    // NAME_MAX/PATH_MAX limits and muddy the assertion with a 502.
+    let port = start_fixture(HashMap::new()).await;
+    let addr = spawn_app(test_config(vec![http_source(port)], 10_000)).await;
+    let prefix = "/images/pics/";
+    let suffix = "/w320.webp";
+    let filler = 8192 - prefix.len() - suffix.len();
+
+    let exact = format!("{prefix}{}{suffix}", "a".repeat(filler));
+    assert_eq!(exact.len(), 8192);
+    let response = send_request(addr, "GET", &exact).await;
+    assert_eq!(response.status, 404, "exactly 8192 bytes is not overlong");
+
+    let over = format!("{prefix}{}{suffix}", "a".repeat(filler + 1));
+    let response = send_request(addr, "GET", &over).await;
+    assert_eq!(response.status, 400, "8193 bytes is overlong");
+    assert_no_store(&response);
+    assert_error_body(&response);
+}
+
 /// The public error body is JSON-encoded, so hostile characters in an
 /// internal message can never corrupt it.
 #[test]
