@@ -25,3 +25,32 @@ the first green deploy:
 
 CI runs `npx --yes wrangler@4 deploy` from `website/` (Wrangler 4 is current
 stable). Local deploy above uses interactive `wrangler login`.
+
+## PR previews
+
+Pull requests touching `website/**` (or the workflow file) deploy to **one
+shared preview Worker**, `pixtega-preview`, at
+**<https://preview.pixtega.com>**. CI runs
+`npx --yes wrangler@4 deploy --env preview`; the `preview` environment in
+`wrangler.jsonc` sets the Worker name and attaches the custom domain
+(`custom_domain: true` creates/updates the DNS record in the pixtega.com
+zone on deploy). Prod uses the top-level config, so it is never touched.
+The workflow posts a sticky PR comment (marker `<!-- pixtega-preview -->`)
+leading with <https://preview.pixtega.com> (the
+`pixtega-preview.<subdomain>.workers.dev` URL as a secondary link), plus
+the PR number and the short SHA that was deployed.
+
+One shared Worker, not one per PR: the Workers free tier has a limited
+number of Worker (script) slots, so previews all share a single slot.
+Consequence: **last deploy wins** — the most recent preview deploy from
+*any* PR is what is live. The sticky comment's PR number + SHA tell you
+which revision that is.
+
+Previews reuse the same two secrets as prod and are skipped for PRs from
+forks (fork PRs cannot read repo secrets). Production (`pixtega` /
+pixtega.com) deploys only on push to `main`, never from PRs.
+
+If the first preview deploy fails while provisioning the
+preview.pixtega.com custom domain, the API token likely needs **Zone →
+DNS → Edit** on the pixtega.com zone in addition to Edit Cloudflare
+Workers — custom-domain attachment writes a DNS record.
