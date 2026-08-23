@@ -49,15 +49,13 @@
 //! threads. The libvips error buffer is process-global, so the `detail`
 //! strings attached to errors are best-effort diagnostics only.
 
-use std::ffi::CStr;
-use std::os::raw::c_void;
-use std::sync::Once;
+use std::sync::OnceLock;
 
 use libvips::ops::{
     self, FlattenOptions, ForeignHeifCompression, HeifsaveBufferOptions, JpegsaveBufferOptions,
     Size, ThumbnailBufferOptions, WebpsaveBufferOptions,
 };
-use libvips::{bindings, VipsApp, VipsImage};
+use libvips::{VipsApp, VipsImage};
 
 use crate::errors::{ConfigError, ProcessError};
 use crate::types::{OutputFormat, Transform};
@@ -85,28 +83,27 @@ enum SniffedKind {
     Heif,
 }
 
-static VIPS_INIT: Once = Once::new();
+/// The process-wide libvips runtime handle. Intentionally leaked:
+/// `VipsApp`'s `Drop` calls `vips_shutdown()`, which must never run while
+/// the process may still use libvips. Holding the leaked `&'static`
+/// reference (instead of `mem::forget` alone) keeps the safe `VipsApp`
+/// methods — error-buffer access in particular — usable for the process
+/// lifetime.
+static VIPS_APP: OnceLock<&'static VipsApp> = OnceLock::new();
 
 /// Initialize the process-wide libvips runtime. Safe to call more than
 /// once; only the first call does work. Must be called before
 /// [`process_image`].
 pub fn init_vips() {
-    VIPS_INIT.call_once(|| {
-        // Fix glibc's heap trim threshold. By default it ratchets upward in
-        // step with the dynamic mmap threshold every time a large
-        // mmap-backed block is freed, after which multi-MB source and decode
-        // buffers are carved from per-thread arenas that effectively never
-        // shrink; across blocking threads the retained arenas multiply
-        // resident memory. Fixing the threshold keeps returning freed arena
-        // tops above 32 MB to the OS while leaving typical per-request
-        // decode scratch resident for reuse (measured: peak RSS -12..-77%
-        // across the benchmark corpus at unchanged latency; see
-        // scripts/bench/). Setting any mallopt parameter also disables the
-        // dynamic threshold adjustment, which is what makes this stick.
-        #[cfg(all(target_os = "linux", target_env = "gnu"))]
-        unsafe {
-            libc::mallopt(libc::M_TRIM_THRESHOLD, 32 * 1024 * 1024);
-        }
+    let _ = vips_app();
+}
+
+/// The initialized process-wide libvips runtime. The first call performs
+/// initialization with the same single-init guarantee `Once::call_once`
+/// gave: concurrent callers block until the winning initializer finishes.
+fn vips_app() -> &'static VipsApp {
+    VIPS_APP.get_or_init(|| {
+        vips_ffi::tune_glibc_trim_threshold();
         let app = VipsApp::new("pixtega", false).expect("libvips runtime failed to initialize");
         // Modest per-operation thread pool: request-level parallelism comes
         // from max_concurrent_derivations, not from libvips worker threads.
@@ -117,10 +114,9 @@ pub fn init_vips() {
         // default up to 100 operations) long after the response was sent.
         app.cache_set_max(0);
         app.cache_set_max_mem(0);
-        // VipsApp's Drop calls vips_shutdown(), which must never run while
-        // the process may still use libvips. Leak the handle on purpose.
-        std::mem::forget(app);
-    });
+        // Leak the handle on purpose so Drop/vips_shutdown() never runs.
+        Box::leak(Box::new(app))
+    })
 }
 
 /// Verify at runtime that libvips can actually encode every enabled format
@@ -303,19 +299,12 @@ fn encode(
 /// through the whitelist. `None` from libvips (no loader at all) and any
 /// non-whitelisted loader are both undecodable.
 fn sniff_loader(bytes: &[u8]) -> Result<SniffedKind, ProcessError> {
-    let name = unsafe {
-        let ptr = bindings::vips_foreign_find_load_buffer(
-            bytes.as_ptr() as *const c_void,
-            bytes.len() as _,
-        );
-        if ptr.is_null() {
-            // find_load_buffer leaves a message in the global error buffer.
-            let detail = take_vips_error_buffer();
-            return Err(undecodable(format!(
-                "no image loader accepts these bytes: {detail}"
-            )));
-        }
-        CStr::from_ptr(ptr).to_string_lossy().into_owned()
+    let Some(name) = vips_ffi::find_load_buffer(bytes) else {
+        // find_load_buffer leaves a message in the global error buffer.
+        let detail = take_vips_error_buffer();
+        return Err(undecodable(format!(
+            "no image loader accepts these bytes: {detail}"
+        )));
     };
     let lower = name.to_ascii_lowercase();
     let codec = lower
@@ -376,23 +365,76 @@ fn describe_vips_error(err: &libvips::error::Error) -> String {
     }
 }
 
+/// Return the buffer content as an owned, trimmed String and clear the
+/// buffer, via the safe `VipsApp` API. Empty when the buffer is empty;
+/// non-UTF-8 content (not produced by libvips in practice) also reads as
+/// empty rather than failing — the buffer is best-effort diagnostics only.
 fn take_vips_error_buffer() -> String {
-    unsafe {
-        let ptr = bindings::vips_error_buffer();
-        let message = if ptr.is_null() {
-            String::new()
-        } else {
-            CStr::from_ptr(ptr).to_string_lossy().trim().to_string()
-        };
-        bindings::vips_error_clear();
-        message
+    let app = vips_app();
+    let message = app
+        .error_buffer()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    app.error_clear();
+    message
+}
+
+/// The only code in the crate allowed to use `unsafe` (the crate roots are
+/// `#![deny(unsafe_code)]`): raw libvips and libc calls with no safe
+/// wrapper in the pinned `libvips = "=1.6.1"` bindings. Keep this module
+/// minimal and keep `unsafe` out of call sites; everything else must go
+/// through `VipsApp`'s safe methods.
+#[allow(unsafe_code)]
+mod vips_ffi {
+    use std::ffi::CStr;
+    use std::os::raw::c_void;
+
+    use libvips::bindings;
+
+    /// Fix glibc's heap trim threshold. By default it ratchets upward in
+    /// step with the dynamic mmap threshold every time a large mmap-backed
+    /// block is freed, after which multi-MB source and decode buffers are
+    /// carved from per-thread arenas that effectively never shrink; across
+    /// blocking threads the retained arenas multiply resident memory.
+    /// Fixing the threshold keeps returning freed arena tops above 32 MB
+    /// to the OS while leaving typical per-request decode scratch resident
+    /// for reuse (measured: peak RSS -12..-77% across the benchmark corpus
+    /// at unchanged latency; see scripts/bench/). Setting any mallopt
+    /// parameter also disables the dynamic threshold adjustment, which is
+    /// what makes this stick. No-op on non-glibc targets.
+    pub fn tune_glibc_trim_threshold() {
+        // SAFETY: mallopt only sets a process-global allocator tuning
+        // parameter; it dereferences no pointers. M_TRIM_THRESHOLD is
+        // glibc-specific, which the linux-gnu cfg guarantees.
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        unsafe {
+            libc::mallopt(libc::M_TRIM_THRESHOLD, 32 * 1024 * 1024);
+        }
+    }
+
+    /// Ask libvips which buffer loader it would pick for these bytes.
+    /// Returns the loader's GObject class name (e.g.
+    /// "VipsForeignLoadJpegBuffer"), or `None` when no loader accepts the
+    /// bytes — libvips then leaves a message in the global error buffer.
+    pub fn find_load_buffer(bytes: &[u8]) -> Option<String> {
+        // SAFETY: `bytes.as_ptr()` is valid for `bytes.len()` bytes for
+        // the whole call and libvips only reads the buffer (it sniffs a
+        // prefix). The returned pointer is either null or a libvips-owned
+        // static class-name string valid for the process lifetime; it is
+        // copied into an owned String here, so nothing borrowed escapes.
+        unsafe {
+            let ptr = bindings::vips_foreign_find_load_buffer(
+                bytes.as_ptr() as *const c_void,
+                bytes.len() as _,
+            );
+            (!ptr.is_null()).then(|| CStr::from_ptr(ptr).to_string_lossy().into_owned())
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CString;
 
     // ------------------------------------------------ container sniffing
 
@@ -477,14 +519,17 @@ mod tests {
     /// not interleave with each other.
     static VIPS_ERROR_BUFFER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// Push `message` into the process-global libvips error buffer.
+    /// Push `message` into the process-global libvips error buffer through
+    /// the safe `VipsApp` API. The binding passes the message as the printf
+    /// format string of `vips_error`, so it must not contain `%`.
     fn set_vips_error(message: &str) {
-        let domain = CString::new("pixtega-test").unwrap();
-        let fmt = CString::new("%s").unwrap();
-        let text = CString::new(message).unwrap();
-        unsafe {
-            bindings::vips_error(domain.as_ptr(), fmt.as_ptr(), text.as_ptr());
-        }
+        assert!(
+            !message.contains('%'),
+            "message would be interpreted as a printf format"
+        );
+        vips_app()
+            .error("pixtega-test", message)
+            .expect("set libvips error buffer");
     }
 
     #[test]
