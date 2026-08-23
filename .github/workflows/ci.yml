@@ -1,9 +1,10 @@
 # Fast correctness gate for every PR and every push to main.
 #
 # Two jobs:
-#   check     - exactly ./scripts/check.sh (fmt --check, clippy -D warnings,
-#               unit + integration tests) on the toolchain pinned by
-#               rust-toolchain.toml.
+#   check     - exactly ./scripts/check.sh (fmt --check, clippy -D warnings
+#               which also denies rustc dead_code/unused lints, cargo-machete
+#               unused-dependency scan, unit + integration tests) on the
+#               toolchain pinned by rust-toolchain.toml.
 #   container - Docker build of the repository Dockerfile (buildx with GHA
 #               layer caching), then ./scripts/container-acceptance.sh with
 #               PIXTEGA_SKIP_BUILD=1 (run image + curl smoke test).
@@ -56,7 +57,14 @@ jobs:
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: check.sh (fmt, clippy, tests)
+      # Prebuilt binary so check.sh's `cargo machete` step (unused-dependency
+      # gate) runs in CI exactly as it does locally.
+      - name: Install cargo-machete
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-machete
+
+      - name: check.sh (fmt, clippy, machete, tests)
         run: ./scripts/check.sh
 
   container:
