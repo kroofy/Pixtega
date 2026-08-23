@@ -1880,7 +1880,6 @@ dependencies = [
  "aws-config",
  "aws-sdk-s3",
  "axum",
- "bytes",
  "futures-util",
  "image",
  "libc",
