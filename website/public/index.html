@@ -35,7 +35,15 @@
   </div>
 
   <h2>One URL per image</h2>
-  <pre><code>GET /images/public/photos/example.jpg/w1280.webp?v=7d91c2</code></pre>
+  <figure class="url-anatomy" aria-label="Anatomy of a Pixtega URL">
+    <div class="url-parts">
+      <span class="url-part part-fixed"><code>GET /images</code><span class="part-label">prefix</span></span>
+      <span class="url-part part-mount"><code>/public</code><span class="part-label">mount</span></span>
+      <span class="url-part part-path"><code>/photos/example.jpg</code><span class="part-label">source path</span></span>
+      <span class="url-part part-transform"><code>/w1280.webp</code><span class="part-label">width + format</span></span>
+      <span class="url-part part-version"><code>?v=7d91c2</code><span class="part-label">version</span></span>
+    </div>
+  </figure>
   <p>
     The mount (<code>public</code>) picks a configured source. The path
     names the original. The last segment is the size and format:
@@ -44,6 +52,58 @@
     for the full grammar. An optional <code>v</code> query param is for
     cache busting when the original changes.
   </p>
+
+  <h2>What a URL gives you</h2>
+  <p>
+    Store one original. Every variant is the same URL with a different
+    final segment — and only allowlisted widths and qualities exist.
+  </p>
+  <figure class="derive-diagram" aria-label="One original deriving three variants; a disallowed width is rejected">
+    <div class="derive-source">
+      <code>photos/example.jpg</code>
+      <span class="node-meta">one stored original · 4000×3000</span>
+    </div>
+    <div class="derive-trunk" aria-hidden="true"></div>
+    <ul class="derive-branches">
+      <li class="derive-branch">
+        <code class="edge-label">/w1280.webp</code>
+        <span class="derive-arrow" aria-hidden="true"></span>
+        <div class="derive-out">
+          <strong>1280×960 WebP</strong>
+          <span class="node-meta">quality 82, the WebP default</span>
+        </div>
+      </li>
+      <li class="derive-branch">
+        <code class="edge-label">/w640.avif</code>
+        <span class="derive-arrow" aria-hidden="true"></span>
+        <div class="derive-out">
+          <strong>640×480 AVIF</strong>
+          <span class="node-meta">quality 55, the AVIF default</span>
+        </div>
+      </li>
+      <li class="derive-branch">
+        <code class="edge-label">/w320,q70.jpeg</code>
+        <span class="derive-arrow" aria-hidden="true"></span>
+        <div class="derive-out">
+          <strong>320×240 JPEG</strong>
+          <span class="node-meta">quality 70, from the allowlist</span>
+        </div>
+      </li>
+      <li class="derive-branch derive-rejected">
+        <code class="edge-label">/w2000.webp</code>
+        <span class="derive-arrow" aria-hidden="true"></span>
+        <div class="derive-out">
+          <strong>400 Bad Request</strong>
+          <span class="node-meta">2000 is not an allowed width</span>
+        </div>
+      </li>
+    </ul>
+    <figcaption>
+      Values from <code>config.example.toml</code>: widths
+      <code>[320, 640, 1280, 1920]</code>, per-format quality allowlists.
+      Successes are CDN-cacheable; errors are <code>no-store</code>.
+    </figcaption>
+  </figure>
 
   <h2>Why Pixtega</h2>
   <ul class="features">

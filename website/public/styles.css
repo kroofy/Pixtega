@@ -7,6 +7,11 @@
   --border: #e3e6ea;
   --code-bg: #f5f6f8;
   --max-width: 48rem;
+  --seg-mount: #b45309;
+  --seg-path: #0f766e;
+  --seg-transform: #4338ca;
+  --seg-version: #be185d;
+  --bad: #b91c1c;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -18,6 +23,11 @@
     --accent-soft: #1e2138;
     --border: #2a2f38;
     --code-bg: #191d24;
+    --seg-mount: #fbbf24;
+    --seg-path: #5eead4;
+    --seg-transform: #a5b4fc;
+    --seg-version: #f9a8d4;
+    --bad: #f87171;
   }
 }
 
@@ -216,6 +226,205 @@ th {
 .buttons a.secondary {
   border: 1px solid var(--border);
   color: var(--fg);
+}
+
+/* URL anatomy */
+
+.url-anatomy {
+  margin: 1rem 0;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.1rem 0.7rem;
+  overflow-x: auto;
+}
+
+.url-parts {
+  display: flex;
+  align-items: flex-start;
+  white-space: nowrap;
+}
+
+.url-part {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.url-part > code {
+  font-size: 0.88rem;
+  line-height: 1.55;
+  padding-bottom: 0.3rem;
+  border-bottom: 2px solid transparent;
+}
+
+.part-label {
+  font-size: 0.72rem;
+  padding: 0.25rem 0.3rem 0;
+  color: var(--muted);
+}
+
+.part-mount > code { border-bottom-color: var(--seg-mount); }
+.part-mount .part-label { color: var(--seg-mount); }
+.part-path > code { border-bottom-color: var(--seg-path); }
+.part-path .part-label { color: var(--seg-path); }
+.part-transform > code { border-bottom-color: var(--seg-transform); }
+.part-transform .part-label { color: var(--seg-transform); }
+.part-version > code { border-bottom-color: var(--seg-version); }
+.part-version .part-label { color: var(--seg-version); }
+
+/* Derivation diagram */
+
+.derive-diagram {
+  margin: 1.5rem 0;
+}
+
+.derive-source {
+  width: fit-content;
+  margin: 0 auto;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--code-bg);
+  padding: 0.6rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.derive-source > code {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.node-meta {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.derive-trunk {
+  width: 2px;
+  height: 1rem;
+  margin: 0 auto;
+  background: var(--border);
+}
+
+.derive-branches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0 0.6rem;
+}
+
+/* Horizontal connector spanning the four column centers. */
+.derive-branches::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 12.5%;
+  right: 12.5%;
+  border-top: 2px solid var(--border);
+}
+
+.derive-branch {
+  margin: 0;
+  position: relative;
+  padding-top: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+/* Vertical drop from the horizontal connector to each branch. */
+.derive-branch::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  height: 0.9rem;
+  border-left: 2px solid var(--border);
+  transform: translateX(-1px);
+}
+
+.edge-label {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.15em 0.45em;
+  font-size: 0.78rem;
+  position: relative;
+}
+
+.derive-arrow {
+  width: 2px;
+  height: 0.9rem;
+  background: var(--border);
+  position: relative;
+  margin-bottom: 0.4rem;
+}
+
+.derive-arrow::after {
+  content: "";
+  position: absolute;
+  bottom: -0.35rem;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 0.32rem solid transparent;
+  border-top-color: var(--muted);
+}
+
+.derive-out {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.55rem 0.6rem;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.derive-out strong {
+  font-size: 0.88rem;
+}
+
+.derive-rejected .derive-out {
+  border-style: dashed;
+}
+
+.derive-rejected .derive-out strong {
+  color: var(--bad);
+}
+
+.derive-rejected .edge-label {
+  text-decoration: line-through;
+  text-decoration-color: var(--bad);
+}
+
+.derive-diagram figcaption {
+  margin-top: 0.9rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+@media (max-width: 40rem) {
+  .derive-branches {
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem 0.75rem;
+  }
+
+  .derive-branches::before,
+  .derive-branch::before,
+  .derive-trunk {
+    display: none;
+  }
+
+  .derive-source {
+    margin-bottom: 1rem;
+  }
 }
 
 footer.site {
