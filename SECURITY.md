@@ -33,9 +33,12 @@ configured Source root, bucket, or base URL, that is a critical report.
 
 Callers must never influence which host the service talks to. The Mount is
 the only routing input, and redirects from an HTTP(S) Source must stay on
-the configured scheme, host, port, and base path. A redirect or
-URL-construction bug that lets a response steer the service to another
-origin is a critical report.
+the configured scheme, host, port, and base path. Additionally, private
+and local destinations (loopback, link-local/metadata addresses, RFC 1918,
+`localhost`, `*.internal`) are refused at startup and before every
+connection unless a source explicitly sets `allow_private_destinations`.
+A redirect or URL-construction bug that lets a response steer the service
+to another origin — or to a blocked destination — is a critical report.
 
 ### Decompression bombs and resource exhaustion
 

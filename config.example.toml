@@ -27,6 +27,10 @@ allowed_qualities = [70, 92]
 mount = "public"
 key_prefix = "media"
 transport = "http"
+# Pin base_url to an origin you control, over HTTPS wherever it crosses an
+# untrusted network. Private, loopback, link-local, and metadata-style
+# hosts are rejected at startup unless the source sets
+# `allow_private_destinations = true` (local development fixtures only).
 base_url = "https://images.example.test"
 
 [[sources]]

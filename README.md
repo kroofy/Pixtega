@@ -132,11 +132,41 @@ base_url = "https://images.example.test"
 - `http`: `base_url` (http or https) plus optional `ca_certificate_file`
   (PEM, HTTPS only, resolved relative to the config file) for local fixture
   servers. Hostname verification always stays on. Use HTTPS outside
-  loopback and trusted private networks.
+  loopback and trusted private networks; plain `http` is supported
+  intentionally for local fixtures and trusted internal hops only.
 - `filesystem`: `root`, resolved relative to the config file and
   canonicalized at startup. Symlinks below the root are always rejected.
 - `s3`: `bucket` and `region`, plus optional `endpoint_url` and
   `force_path_style` for local S3-compatible servers.
+
+### Pinning sources to trusted origins
+
+Every upstream fetch destination is fixed by the operator: callers select
+only a mount, never a host. Pin each `base_url` (and S3 `endpoint_url`) to
+an origin you control, over HTTPS wherever it crosses a network you do not.
+
+On top of that, a destination policy is enforced at startup and again on
+every fetch: a `base_url` or `endpoint_url` whose host is loopback,
+link-local (where cloud instance-metadata endpoints live), unspecified,
+RFC 1918 private, carrier-grade NAT, IPv6 unique-local, `localhost`, or a
+reserved-internal name (`metadata`, `*.internal`) is a startup error. The
+HTTP adapter re-checks the same policy before every connection, including
+each redirect hop — redirects are additionally bounded and must stay on the
+configured scheme, host, port, and base path.
+
+For local development against fixture servers, opt out per source:
+
+```toml
+[[sources]]
+mount = "dev"
+transport = "http"
+base_url = "http://127.0.0.1:9000"
+allow_private_destinations = true   # local development only
+```
+
+The policy checks the literal configured host and does not resolve DNS, so
+it cannot detect a public hostname that resolves to a private address —
+another reason to point sources only at origins you control.
 
 ## S3 credentials and permissions
 

@@ -231,6 +231,9 @@ fn adapter(base_url: &str, ca: Option<PathBuf>, limits: FetchLimits) -> HttpSour
         key_prefix_segments: Vec::new(),
         base_url: Url::parse(base_url).unwrap(),
         ca_certificate_file: ca,
+        // Every fixture server here is on loopback, which the destination
+        // policy blocks by default.
+        allow_private_destinations: true,
     };
     HttpSource::new(&config, limits).expect("adapter construction")
 }
@@ -479,6 +482,63 @@ async fn redirect_staying_beneath_a_deep_base_path_is_followed() {
     let source = adapter(&fixture.url("/base"), None, default_limits());
     let fetched = source.fetch(&key(&["img.jpg"])).await.unwrap();
     assert_eq!(fetched.bytes, b"deep");
+}
+
+/// Without the `allow_private_destinations` opt-in, a private or local
+/// base URL is refused at fetch time before any connection: the running
+/// fixture server never sees a request.
+#[tokio::test]
+async fn private_destination_is_unavailable_without_the_opt_in() {
+    let fixture = Fixture::start(HashMap::from([(
+        "/img.jpg".to_string(),
+        Script::Bytes(ok_response(b"must never be fetched")),
+    )]))
+    .await;
+    let config = HttpSourceConfig {
+        mount: "public".to_string(),
+        key_prefix_segments: Vec::new(),
+        base_url: Url::parse(&fixture.url("")).unwrap(),
+        ca_certificate_file: None,
+        allow_private_destinations: false,
+    };
+    let source = HttpSource::new(&config, default_limits()).expect("adapter construction");
+    let err = source.fetch(&key(&["img.jpg"])).await.unwrap_err();
+    assert!(
+        matches!(err, SourceError::Unavailable { .. }),
+        "expected Unavailable, got {err:?}"
+    );
+    assert!(
+        fixture.recorded().is_empty(),
+        "the blocked destination must never be contacted"
+    );
+}
+
+/// Redirects toward metadata-style or otherwise blocked destinations are
+/// rejected before any connection, even when the source itself opted into
+/// private destinations for its loopback fixture: the redirect leaves the
+/// configured origin. The targets are fake URLs that are never contacted.
+#[tokio::test]
+async fn redirect_to_a_metadata_style_destination_is_never_followed() {
+    for target in [
+        "http://169.254.169.254/latest/img.jpg",
+        "http://metadata.google.internal/img.jpg",
+        "http://[fd00:ec2::254]/img.jpg",
+    ] {
+        let fixture = Fixture::start(HashMap::from([(
+            "/base/img.jpg".to_string(),
+            Script::Bytes(redirect_response(302, target)),
+        )]))
+        .await;
+        let source = adapter(&fixture.url("/base"), None, default_limits());
+        let err = source.fetch(&key(&["img.jpg"])).await.unwrap_err();
+        assert!(
+            matches!(err, SourceError::Unavailable { .. }),
+            "target {target}: expected Unavailable, got {err:?}"
+        );
+        // Only the initial fixture request; the redirect target was never
+        // contacted.
+        assert_eq!(fixture.recorded().len(), 1, "target {target}");
+    }
 }
 
 #[tokio::test]
@@ -834,6 +894,7 @@ async fn unreadable_ca_certificate_file_is_a_config_error() {
         key_prefix_segments: Vec::new(),
         base_url: Url::parse("https://localhost:1").unwrap(),
         ca_certificate_file: Some(PathBuf::from("/nonexistent/ca.pem")),
+        allow_private_destinations: true,
     };
     assert!(HttpSource::new(&config, default_limits()).is_err());
 }

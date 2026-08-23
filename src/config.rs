@@ -9,7 +9,7 @@
 //! at startup.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -101,6 +101,12 @@ pub struct HttpSourceConfig {
     /// base URL. Resolved relative to the configuration file. TLS hostname
     /// verification stays enabled.
     pub ca_certificate_file: Option<PathBuf>,
+    /// Allow `base_url` to point at a private or local destination
+    /// (loopback, link-local, RFC 1918, cloud-metadata-style hosts).
+    /// Local-development opt-in; defaults to false. The HTTP adapter also
+    /// re-checks every fetched URL, including redirect targets, against
+    /// this policy at request time.
+    pub allow_private_destinations: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -189,6 +195,9 @@ struct RawSource {
     mount: String,
     transport: String,
     key_prefix: Option<String>,
+    // Valid for http (base_url) and s3-with-endpoint_url (both are
+    // operator-configured upstream fetch destinations).
+    allow_private_destinations: Option<bool>,
     // HTTP(S)-only fields.
     base_url: Option<String>,
     ca_certificate_file: Option<String>,
@@ -434,6 +443,10 @@ fn validate_source(raw: &RawSource, base_dir: &Path) -> Result<SourceConfig, Con
                 ))
             })?;
             let base_url = parse_http_url(mount, "base_url", base_url)?;
+            let allow_private_destinations = raw.allow_private_destinations.unwrap_or(false);
+            if !allow_private_destinations {
+                check_destination_policy(mount, "base_url", &base_url)?;
+            }
             let ca_certificate_file = match raw.ca_certificate_file.as_deref() {
                 None => None,
                 Some(ca_path) => {
@@ -451,10 +464,17 @@ fn validate_source(raw: &RawSource, base_dir: &Path) -> Result<SourceConfig, Con
                 key_prefix_segments,
                 base_url,
                 ca_certificate_file,
+                allow_private_destinations,
             }))
         }
         "filesystem" => {
             forbid_field(mount, "filesystem", "base_url", raw.base_url.is_some())?;
+            forbid_field(
+                mount,
+                "filesystem",
+                "allow_private_destinations",
+                raw.allow_private_destinations.is_some(),
+            )?;
             forbid_field(
                 mount,
                 "filesystem",
@@ -513,6 +533,17 @@ fn validate_source(raw: &RawSource, base_dir: &Path) -> Result<SourceConfig, Con
                 .as_deref()
                 .map(|u| parse_http_url(mount, "endpoint_url", u))
                 .transpose()?;
+            if raw.allow_private_destinations.is_some() && endpoint_url.is_none() {
+                return Err(ConfigError::new(format!(
+                    "source `{mount}`: `allow_private_destinations` is only valid with \
+                     `endpoint_url` for transport `s3`"
+                )));
+            }
+            if let Some(endpoint_url) = &endpoint_url {
+                if !raw.allow_private_destinations.unwrap_or(false) {
+                    check_destination_policy(mount, "endpoint_url", endpoint_url)?;
+                }
+            }
             Ok(SourceConfig::S3(S3SourceConfig {
                 mount: mount.clone(),
                 key_prefix_segments,
@@ -582,6 +613,69 @@ fn parse_http_url(mount: &str, field: &str, value: &str) -> Result<Url, ConfigEr
             "source `{mount}`: `{field}` scheme must be http or https, got `{other}`"
         ))),
     }
+}
+
+/// True when `url` names a destination an image origin should never be:
+/// loopback, link-local (cloud instance-metadata addresses live here),
+/// unspecified/broadcast, RFC 1918 private, carrier-grade NAT, IPv6
+/// unique-local, or a reserved local hostname (`localhost`, the private-use
+/// `.internal` TLD used by cloud metadata services, and the bare `metadata`
+/// alias).
+///
+/// The check is on the URL's literal host only; it performs no DNS
+/// resolution, so a public hostname that resolves to a private address is
+/// not detected here. Pin sources to origins you control.
+pub fn is_private_or_local_destination(url: &Url) -> bool {
+    match url.host() {
+        // A URL without a host can never be a valid upstream.
+        None => true,
+        Some(url::Host::Domain(domain)) => {
+            let domain = domain.trim_end_matches('.').to_ascii_lowercase();
+            domain == "localhost"
+                || domain.ends_with(".localhost")
+                || domain == "metadata"
+                || domain == "internal"
+                || domain.ends_with(".internal")
+        }
+        Some(url::Host::Ipv4(ip)) => is_private_or_local_ipv4(ip),
+        Some(url::Host::Ipv6(ip)) => {
+            if ip.is_loopback() || ip.is_unspecified() {
+                return true;
+            }
+            // IPv4-mapped addresses take the IPv4 rules.
+            if let Some(mapped) = ip.to_ipv4_mapped() {
+                return is_private_or_local_ipv4(mapped);
+            }
+            let first_segment = ip.segments()[0];
+            // fe80::/10 link-local; fc00::/7 unique-local (fd00:ec2::254,
+            // the IPv6 EC2 metadata address, is in this range).
+            (first_segment & 0xffc0) == 0xfe80 || (first_segment & 0xfe00) == 0xfc00
+        }
+    }
+}
+
+fn is_private_or_local_ipv4(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    ip.is_loopback()
+        || ip.is_unspecified()
+        || ip.is_link_local()
+        || ip.is_private()
+        || ip.is_broadcast()
+        // 100.64.0.0/10 shared address space (carrier-grade NAT); some
+        // cloud metadata services answer inside this range.
+        || (octets[0] == 100 && (octets[1] & 0xc0) == 64)
+}
+
+fn check_destination_policy(mount: &str, field: &str, url: &Url) -> Result<(), ConfigError> {
+    if is_private_or_local_destination(url) {
+        return Err(ConfigError::new(format!(
+            "source `{mount}`: `{field}` host `{host}` is a private, loopback, link-local, \
+             or reserved-internal destination; if this is a local development fixture, set \
+             `allow_private_destinations = true` on this source",
+            host = url.host_str().unwrap_or("")
+        )));
+    }
+    Ok(())
 }
 
 fn resolve_ca_certificate_file(

@@ -501,6 +501,7 @@ mount = "pub"
 key_prefix = ""
 transport = "http"
 base_url = "http://127.0.0.1:{port}"
+allow_private_destinations = true
 "#
     )
 }
@@ -932,6 +933,7 @@ bucket = "{bucket}"
 region = "us-east-1"
 endpoint_url = "http://127.0.0.1:{port}"
 force_path_style = true
+allow_private_destinations = true
 "#,
         port = fixture.port
     );
@@ -1053,6 +1055,7 @@ key_prefix = ""
 transport = "http"
 base_url = "https://localhost:{tls_port}"
 ca_certificate_file = "ca.pem"
+allow_private_destinations = true
 "#
     );
     let config = config_toml(&ConfigOptions::default(), &sources);
