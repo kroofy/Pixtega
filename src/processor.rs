@@ -94,10 +94,31 @@ static VIPS_INIT: Once = Once::new();
 /// [`process_image`].
 pub fn init_vips() {
     VIPS_INIT.call_once(|| {
+        // Fix glibc's heap trim threshold. By default it ratchets upward in
+        // step with the dynamic mmap threshold every time a large
+        // mmap-backed block is freed, after which multi-MB source and decode
+        // buffers are carved from per-thread arenas that effectively never
+        // shrink; across blocking threads the retained arenas multiply
+        // resident memory. Fixing the threshold keeps returning freed arena
+        // tops above 32 MB to the OS while leaving typical per-request
+        // decode scratch resident for reuse (measured: peak RSS -12..-77%
+        // across the benchmark corpus at unchanged latency; see
+        // scripts/bench/). Setting any mallopt parameter also disables the
+        // dynamic threshold adjustment, which is what makes this stick.
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        unsafe {
+            libc::mallopt(libc::M_TRIM_THRESHOLD, 32 * 1024 * 1024);
+        }
         let app = VipsApp::new("pixtega", false).expect("libvips runtime failed to initialize");
         // Modest per-operation thread pool: request-level parallelism comes
         // from max_concurrent_derivations, not from libvips worker threads.
         app.concurrency_set(2);
+        // Disable the libvips operation cache. Every request passes a fresh
+        // source buffer, so cached operations can never be hit again; the
+        // cache would only pin source bytes and decoded pixel buffers (by
+        // default up to 100 operations) long after the response was sent.
+        app.cache_set_max(0);
+        app.cache_set_max_mem(0);
         // VipsApp's Drop calls vips_shutdown(), which must never run while
         // the process may still use libvips. Leak the handle on purpose.
         std::mem::forget(app);

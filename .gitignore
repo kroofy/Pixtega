@@ -3,3 +3,4 @@
 /mutants-score.json
 website/.wrangler/
 website/node_modules/
+/bench/
