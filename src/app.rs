@@ -250,14 +250,8 @@ fn success_response(state: &AppState, resolved: &ResolvedRequest, body: Vec<u8>)
         .expect("static header set is always valid")
 }
 
-/// JSON error body built with serde_json, so an internal message can never
-/// corrupt the body even if a non-static message were ever introduced.
-pub fn error_body(message: &str) -> String {
-    serde_json::json!({ "error": message }).to_string()
-}
-
 fn error_response(state: &AppState, status: StatusCode, message: &str) -> Response {
-    let body = error_body(message);
+    let body = serde_json::json!({ "error": message }).to_string();
     let cache_control = if status == StatusCode::NOT_FOUND {
         format!("public, max-age={}", state.config.not_found_ttl_seconds)
     } else {

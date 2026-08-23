@@ -259,6 +259,13 @@ fn dots_underscores_unicode_and_nesting_survive() {
         // traversal or delimiter is acceptable.
         ("/images/fixtures/a%2520b/w640.webp", "a%20b"),
         ("/images/fixtures/100%25.jpg/w640.webp", "100%.jpg"),
+        // A second decoding that yields ".a"-style content (not "." or
+        // "..") is benign.
+        ("/images/fixtures/%252Ea/w640.webp", "%2Ea"),
+        // The second-decoding scan must not read past the end of the
+        // segment: a `%` followed by fewer than two bytes passes through.
+        ("/images/fixtures/%254/w640.webp", "%4"),
+        ("/images/fixtures/a%25/w640.webp", "a%"),
         (
             "/images/fixtures/a/b/c/d/e/f.jpg/w640.webp",
             "a/b/c/d/e/f.jpg",
@@ -532,11 +539,37 @@ fn widths_outside_the_allowlist_are_rejected() {
         expect_err(&cfg, &path, None, RequestError::DisallowedWidth);
     }
     // Grammatically canonical but larger than any configurable width,
-    // including values that overflow machine integers.
-    for width in ["16385", "99999", "4294967296", "18446744073709551616"] {
+    // including values that overflow machine integers and values whose low
+    // 32 bits spell an allowed width (2^32 + 320): truncation must never
+    // let them through.
+    for width in [
+        "16385",
+        "99999",
+        "4294967296",
+        "4294967616",
+        "18446744073709551616",
+    ] {
         let path = format!("/images/public/a.jpg/w{width}.webp");
         expect_err(&cfg, &path, None, RequestError::DisallowedWidth);
     }
+}
+
+/// 16384 and 100 are the largest configurable width and quality; when
+/// configured they must be served (the caps are inclusive).
+#[test]
+fn configured_boundary_width_and_quality_are_served() {
+    let mut cfg = base_config();
+    cfg.allowed_widths.push(16384);
+    cfg.formats
+        .get_mut(&OutputFormat::Webp)
+        .unwrap()
+        .allowed_qualities
+        .push(100);
+
+    let resolved = ok(&cfg, "/images/public/a.jpg/w16384.webp", None);
+    assert_eq!(resolved.transform.width, 16384);
+    let resolved = ok(&cfg, "/images/public/a.jpg/w320,q100.webp", None);
+    assert_eq!(resolved.transform.quality, 100);
 }
 
 #[test]
@@ -566,8 +599,10 @@ fn qualities_outside_the_selected_policy_are_rejected() {
         let path = format!("/images/public/a.jpg/w640,q{q}.webp");
         expect_err(&cfg, &path, None, RequestError::DisallowedQuality);
     }
-    // Canonical decimals above 100 or beyond u64 can never be allowed.
-    for q in ["101", "1000", "18446744073709551616"] {
+    // Canonical decimals above 100 or beyond u64 can never be allowed,
+    // including values whose low 32 bits spell an allowed quality
+    // (2^32 + 60): truncation must never let them through.
+    for q in ["101", "1000", "4294967356", "18446744073709551616"] {
         let path = format!("/images/public/a.jpg/w640,q{q}.webp");
         expect_err(&cfg, &path, None, RequestError::DisallowedQuality);
     }
@@ -803,6 +838,9 @@ fn literal_and_encoded_traversal_is_rejected() {
         "%255C",
         "a%252Fb",
         "a%255Cb",
+        // "%2E." decodes again to "..": the complete segment becomes
+        // traversal on the second decoding.
+        "%252E.",
         // NUL and control characters, raw and encoded
         "%00",
         "a%00b",

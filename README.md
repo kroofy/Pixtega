@@ -87,7 +87,7 @@ Errors are JSON: `{ "error": "message" }`.
 | 400 | invalid path, mount, query, transform, width, format, or quality |
 | 404 | the Source answered authoritatively that the object is absent |
 | 405 | method other than GET |
-| 500 | resize/flatten/encode failed after a valid source was accepted |
+| 500 | flatten/encode failed after a valid source was accepted |
 | 502 | Source answered without a usable object: permission denied, unexpected upstream status, oversized content, undecodable or unsupported image bytes |
 | 504 | fetching the Source timed out |
 
@@ -228,7 +228,7 @@ smoke test) is in [deploy/lambda/README.md](deploy/lambda/README.md).
 One structured JSON completion event per request on stdout, with status, a
 stable outcome from a closed set (`success`, `rejected_request`,
 `not_found`, `timeout`, `source_too_large`, `source_unavailable`,
-`undecodable_source`, `resize_failed`, `flatten_failed`, `encode_failed`),
+`undecodable_source`, `flatten_failed`, `encode_failed`),
 mount, output width/format, upstream status, byte counts, and elapsed
 milliseconds. Response bodies, credentials, and `v` values are never
 logged.

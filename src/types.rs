@@ -10,7 +10,7 @@ use std::fmt;
 ///
 /// A closed set. Aliases such as `jpg` are intentionally not
 /// representable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum OutputFormat {
     Webp,
     Avif,
@@ -45,11 +45,6 @@ impl OutputFormat {
             "jpeg" => Some(OutputFormat::Jpeg),
             _ => None,
         }
-    }
-
-    /// All formats, in a stable order.
-    pub fn all() -> [OutputFormat; 3] {
-        [OutputFormat::Webp, OutputFormat::Avif, OutputFormat::Jpeg]
     }
 }
 
@@ -90,15 +85,9 @@ impl UpstreamKey {
         UpstreamKey { segments }
     }
 
-    /// The `/`-joined representation (S3 object key, log field).
+    /// The `/`-joined representation (S3 object key).
     pub fn joined(&self) -> String {
         self.segments.join("/")
-    }
-}
-
-impl fmt::Display for UpstreamKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.joined())
     }
 }
 

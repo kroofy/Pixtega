@@ -438,8 +438,8 @@ async fn undecodable_source_bytes_are_a_non_cacheable_502() {
     assert_error_body(&response);
 }
 
-/// A real pipeline 500 (resize/flatten/encode failing AFTER a valid source
-/// image was accepted) cannot be triggered through the HTTP surface without
+/// A real pipeline 500 (flatten/encode failing AFTER a valid source image
+/// was accepted) cannot be triggered through the HTTP surface without
 /// breaking the process, so the 502/500 split is asserted on the error
 /// taxonomy itself: invalid source bytes are 502 (verified over HTTP above),
 /// while pipeline failures carry 500.
@@ -450,9 +450,6 @@ fn processing_taxonomy_distinguishes_source_bytes_from_pipeline_failures() {
     };
     assert_eq!(undecodable.status(), 502);
     for pipeline in [
-        ProcessError::Resize {
-            detail: "x".to_string(),
-        },
         ProcessError::Flatten {
             detail: "x".to_string(),
         },
@@ -556,20 +553,4 @@ async fn a_target_of_exactly_8192_bytes_passes_the_length_gate() {
     assert_eq!(response.status, 400, "8193 bytes is overlong");
     assert_no_store(&response);
     assert_error_body(&response);
-}
-
-/// The public error body is JSON-encoded, so hostile characters in an
-/// internal message can never corrupt it.
-#[test]
-fn hostile_error_messages_cannot_corrupt_the_json_body() {
-    for message in [
-        "quote\" brace} newline\n nul\0 emoji🧨 backslash\\",
-        "{\"error\":\"forged\"}",
-        "\u{202e}control\u{7f}",
-    ] {
-        let body = pixtega::app::error_body(message);
-        let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be JSON");
-        assert_eq!(parsed["error"].as_str(), Some(message));
-        assert_eq!(parsed.as_object().map(|o| o.len()), Some(1));
-    }
 }
