@@ -1,8 +1,20 @@
 # Deploy the docs/homepage Worker (website/) to Cloudflare.
 #
-# On push to main when website/** or this file changes — so copy PRs
-# deploy, and workflow edits can be verified on merge. workflow_dispatch
-# is a manual redeploy from the Actions tab.
+# Two jobs, two Workers, one script slot each (Workers free tier):
+#
+# - deploy — production Worker `pixtega` (pixtega.com). Runs on push to
+#   main when website/** or this file changes, and on workflow_dispatch
+#   (manual redeploy from the Actions tab). Never runs from PRs.
+# - preview — ONE shared Worker `pixtega-preview` (not one Worker per
+#   PR, which would burn a script slot per PR). Runs on pull_request
+#   (opened/synchronize/reopened) touching the same paths, deploys the
+#   PR's website/ with `--name pixtega-preview` (overrides the name in
+#   wrangler.jsonc; prod config untouched), and keeps a sticky PR
+#   comment with the workers.dev URL. Because the Worker is shared, the
+#   most recent deploy from ANY PR is what is live: last deploy wins.
+#   The comment records PR number + short SHA so it's clear which
+#   revision was deployed. Skipped for PRs from forks — they cannot
+#   read the Cloudflare secrets.
 #
 # Wrangler 4 is current stable (4.125.x as of 2026-08-20). Pinned as
 # wrangler@4 so CI tracks latest 4.x without jumping majors.
@@ -13,13 +25,18 @@
 # Edit Cloudflare Workers (Workers Scripts:Edit).
 #
 # Custom domain pixtega.com is already attached to Worker `pixtega`
-# in Cloudflare; this job only updates the Worker.
+# in Cloudflare; these jobs only update the Workers.
 
 name: Website
 
 on:
   push:
     branches: [main]
+    paths:
+      - "website/**"
+      - ".github/workflows/website.yml"
+  pull_request:
+    types: [opened, synchronize, reopened]
     paths:
       - "website/**"
       - ".github/workflows/website.yml"
@@ -30,7 +47,8 @@ permissions:
 
 jobs:
   deploy:
-    name: deploy to Cloudflare
+    name: deploy to Cloudflare (prod)
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -47,3 +65,80 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx --yes wrangler@4 deploy
+
+  preview:
+    name: PR preview (shared Worker)
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    # Per-PR: a newer push to the same PR cancels the older deploy.
+    # Cross-PR races are accepted — last deploy wins on the shared Worker.
+    concurrency:
+      group: website-preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js LTS
+        uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+
+      - name: wrangler deploy to shared preview Worker
+        id: deploy
+        working-directory: website
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        # Capture the workers.dev URL wrangler prints; empty output if
+        # the print format ever changes (the comment step then points at
+        # the run logs instead of failing the job after a good deploy).
+        run: |
+          set -o pipefail
+          npx --yes wrangler@4 deploy --name pixtega-preview | tee deploy-output.txt
+          url=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy-output.txt | head -n 1 || true)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: sticky PR comment with preview URL
+        uses: actions/github-script@v9
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.url }}
+        with:
+          script: |
+            const marker = '<!-- pixtega-preview -->';
+            const sha = context.payload.pull_request.head.sha.slice(0, 7);
+            const url = process.env.PREVIEW_URL;
+            const where = url
+              ? url
+              : 'deployed, but the URL was not found in wrangler output — see this run\'s logs';
+            const body = [
+              marker,
+              `**Docs preview** for PR #${context.issue.number} at \`${sha}\`: ${where}`,
+              '',
+              'Shared preview Worker `pixtega-preview` — the most recent preview',
+              'deploy from any PR is what is live (last deploy wins).',
+            ].join('\n');
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
