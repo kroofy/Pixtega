@@ -563,12 +563,75 @@ fn base_url_scheme_must_be_http_or_https() {
     let sources = "[[sources]]\nmount = \"pics\"\ntransport = \"http\"\nbase_url = \"not a url\"\n";
     assert_rejected(&config_with(&[], FORMATS, sources), "base_url");
 
-    for base_url in ["http://127.0.0.1:9000", "https://images.example.test"] {
+    for base_url in ["http://images.example.test", "https://images.example.test"] {
         let sources = format!(
             "[[sources]]\nmount = \"pics\"\ntransport = \"http\"\nbase_url = \"{base_url}\"\n"
         );
         load(&config_with(&[], FORMATS, &sources))
             .unwrap_or_else(|e| panic!("{base_url} should be accepted: {e}"));
+    }
+}
+
+/// Private, loopback, link-local, and metadata-style base URLs are startup
+/// errors unless the source explicitly opts in. All are fake or reserved
+/// addresses; nothing is contacted during config validation.
+#[test]
+fn private_or_local_base_urls_are_rejected_without_the_opt_in() {
+    let blocked = [
+        "http://127.0.0.1:9000",
+        "http://127.8.9.10",
+        "https://[::1]:8443",
+        "http://0.0.0.0",
+        "http://169.254.169.254/latest",
+        "http://[fe80::1]",
+        "http://[fd00:ec2::254]",
+        "http://[::ffff:169.254.169.254]",
+        "http://10.0.0.7",
+        "http://172.16.3.4",
+        "http://192.168.1.10",
+        "http://100.100.100.200",
+        "http://localhost:9000",
+        "http://images.localhost",
+        "http://metadata.google.internal",
+        "http://metadata",
+        "http://something.internal",
+    ];
+    for base_url in blocked {
+        let sources = format!(
+            "[[sources]]\nmount = \"pics\"\ntransport = \"http\"\nbase_url = \"{base_url}\"\n"
+        );
+        assert_rejected(&config_with(&[], FORMATS, &sources), "base_url");
+        // The error must point at the remedy.
+        let err = load(&config_with(&[], FORMATS, &sources)).unwrap_err();
+        assert!(
+            err.to_string().contains("allow_private_destinations"),
+            "error for {base_url} should mention the opt-in, got {err}"
+        );
+    }
+}
+
+#[test]
+fn private_base_urls_are_accepted_with_the_explicit_opt_in() {
+    for base_url in ["http://127.0.0.1:9000", "http://localhost:9000"] {
+        let sources = format!(
+            "[[sources]]\nmount = \"pics\"\ntransport = \"http\"\nbase_url = \"{base_url}\"\n\
+             allow_private_destinations = true\n"
+        );
+        let config = load(&config_with(&[], FORMATS, &sources))
+            .unwrap_or_else(|e| panic!("{base_url} with the opt-in should be accepted: {e}"));
+        match only_source(&config) {
+            SourceConfig::Http(http) => assert!(http.allow_private_destinations),
+            other => panic!("expected an http source, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn public_base_urls_default_to_the_destination_policy_being_enforced() {
+    let config = load(&valid_config()).expect("baseline configuration must parse");
+    match only_source(&config) {
+        SourceConfig::Http(http) => assert!(!http.allow_private_destinations),
+        other => panic!("expected an http source, got {other:?}"),
     }
 }
 
@@ -639,7 +702,10 @@ fn s3_endpoint_url_scheme_must_be_http_or_https() {
     let bad = s3_source("endpoint_url = \"ftp://localhost:9000\"\n");
     assert_rejected(&config_with(&[], FORMATS, &bad), "endpoint_url");
 
-    let good = s3_source("endpoint_url = \"http://localhost:9000\"\nforce_path_style = true\n");
+    let good = s3_source(
+        "endpoint_url = \"http://localhost:9000\"\nforce_path_style = true\n\
+         allow_private_destinations = true\n",
+    );
     let config = load(&config_with(&[], FORMATS, &good)).expect("local endpoint must parse");
     match only_source(&config) {
         SourceConfig::S3(s3) => {
@@ -651,6 +717,40 @@ fn s3_endpoint_url_scheme_must_be_http_or_https() {
         }
         other => panic!("expected an s3 source, got {other:?}"),
     }
+}
+
+/// A private or local S3 `endpoint_url` needs the same explicit opt-in as
+/// an http `base_url`; a public endpoint needs none.
+#[test]
+fn s3_endpoint_url_destination_policy_matches_the_http_one() {
+    for endpoint in [
+        "http://localhost:9000",
+        "http://127.0.0.1:9000",
+        "http://169.254.169.254",
+    ] {
+        let sources = s3_source(&format!("endpoint_url = \"{endpoint}\"\n"));
+        assert_rejected(&config_with(&[], FORMATS, &sources), "endpoint_url");
+    }
+
+    let public = s3_source("endpoint_url = \"https://s3.example.test\"\n");
+    load(&config_with(&[], FORMATS, &public)).expect("public endpoint needs no opt-in");
+}
+
+/// The opt-in only makes sense where an upstream URL exists: never on
+/// filesystem sources, and only next to `endpoint_url` on s3 sources.
+#[test]
+fn allow_private_destinations_requires_an_upstream_url() {
+    let on_filesystem = filesystem_source("allow_private_destinations = true\n");
+    assert_rejected(
+        &config_with(&[], FORMATS, &on_filesystem),
+        "allow_private_destinations",
+    );
+
+    let on_s3_without_endpoint = s3_source("allow_private_destinations = true\n");
+    assert_rejected(
+        &config_with(&[], FORMATS, &on_s3_without_endpoint),
+        "allow_private_destinations",
+    );
 }
 
 // ---------------------------------------------------------------------------

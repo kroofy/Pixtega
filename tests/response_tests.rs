@@ -227,6 +227,7 @@ fn http_source(port: u16) -> SourceConfig {
         key_prefix_segments: Vec::new(),
         base_url: Url::parse(&format!("http://127.0.0.1:{port}")).unwrap(),
         ca_certificate_file: None,
+        allow_private_destinations: true,
     })
 }
 

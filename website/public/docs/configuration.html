@@ -146,7 +146,21 @@ region = "us-east-1"</code></pre>
       <code>ca_certificate_file</code> (PEM, HTTPS only, resolved relative to
       the config file) supports local fixture servers; hostname verification
       always stays on. Use HTTPS outside loopback and trusted private
-      networks.
+      networks; plain http is intended for local fixtures and trusted
+      internal hops only.
+    </p>
+    <p>
+      Pin <code>base_url</code> to an origin you control. A destination
+      policy is enforced at startup and again before every fetch (including
+      each redirect hop): hosts that are loopback, link-local (where cloud
+      instance-metadata endpoints live), RFC&nbsp;1918 private,
+      carrier-grade NAT, IPv6 unique-local, <code>localhost</code>, or
+      reserved-internal names (<code>metadata</code>,
+      <code>*.internal</code>) are rejected unless the source sets
+      <code>allow_private_destinations&nbsp;=&nbsp;true</code> — a
+      local-development opt-in for fixture servers. The policy checks the
+      configured host literally and does not resolve DNS. The same policy
+      applies to the s3 transport's <code>endpoint_url</code>.
     </p>
 
     <h3>filesystem</h3>

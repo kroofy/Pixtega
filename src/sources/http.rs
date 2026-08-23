@@ -2,7 +2,10 @@
 //!
 //! Joins base URL + Key Prefix + validated path with a URL parser. One
 //! timeout covers the whole exchange. Redirects are bounded, same-origin,
-//! and stay beneath the configured base path. Sends
+//! and stay beneath the configured base path. Unless the source opts in
+//! with `allow_private_destinations`, private and local destinations
+//! (loopback, link-local, metadata-style hosts) are refused before any
+//! connection is made — for the initial URL and every redirect hop. Sends
 //! `Accept-Encoding: identity` and rejects any other content encoding.
 //! 404/410 are absence; every other non-2xx is unavailability. Byte limits
 //! are checked against `Content-Length` when present and enforced again
@@ -27,6 +30,10 @@ pub struct HttpSource {
     /// Canonical non-empty path segments of `base_url`, used for the
     /// base-path prefix check on redirect targets.
     base_path_segments: Vec<String>,
+    /// When false (the default), every URL this adapter would fetch —
+    /// the initial request and each redirect hop — is rejected before
+    /// connecting if it targets a private or local destination.
+    allow_private_destinations: bool,
     limits: FetchLimits,
 }
 
@@ -72,6 +79,7 @@ impl HttpSource {
             client,
             base_url: config.base_url.clone(),
             base_path_segments: canonical_path_segments(&config.base_url),
+            allow_private_destinations: config.allow_private_destinations,
             limits,
         })
     }
@@ -79,6 +87,15 @@ impl HttpSource {
     async fn fetch_inner(&self, mut url: Url) -> Result<FetchedObject, SourceError> {
         let mut redirects_followed: u32 = 0;
         loop {
+            // Belt: configuration validation already rejects private
+            // base URLs without the opt-in; re-checking here keeps the
+            // guarantee even for adapters constructed outside `load_from_*`
+            // and covers every redirect hop before a connection is made.
+            if !self.allow_private_destinations
+                && crate::config::is_private_or_local_destination(&url)
+            {
+                return Err(unavailable(None, "destination blocked by policy"));
+            }
             let response = self
                 .client
                 .get(url.clone())
