@@ -91,7 +91,7 @@ aws lambda create-function \
   --memory-size 1024 --timeout 30 \
   --environment "Variables={CONFIG=$(cat deploy/lambda/example-config.toml)}"
 
-# 4. Expose a Function URL and test
+# 4. Expose a Function URL for a smoke test (dev only — see below)
 aws lambda create-function-url-config --function-name pixtega --auth-type NONE
 curl -o out.webp "${FUNCTION_URL}images/fixtures/photos/example.jpg/w640.webp"</code></pre>
     <p>
@@ -100,6 +100,20 @@ curl -o out.webp "${FUNCTION_URL}images/fixtures/photos/example.jpg/w640.webp"</
       <a href="https://github.com/kroofy/Pixtega/blob/main/deploy/lambda/README.md">deploy/lambda/README.md</a>,
       with a ready-made
       <a href="https://github.com/kroofy/Pixtega/blob/main/deploy/lambda/example-config.toml">example-config.toml</a>.
+    </p>
+
+    <h2 id="production-exposure">Production exposure<a class="anchor" href="#production-exposure" aria-label="Link to this section">#</a></h2>
+    <p>
+      <code>--auth-type NONE</code> makes the Function URL publicly
+      invokable by anyone, with no cache absorbing traffic and no auth
+      layer — it is for the smoke test above only, not for an
+      internet-facing production endpoint. For production, put CloudFront
+      in front (the service's cache policy is designed for it), switch the
+      Function URL to <code>--auth-type AWS_IAM</code> with a CloudFront
+      Origin Access Control (OAC) for Lambda Function URLs so only the
+      distribution can invoke the function, and remove the public
+      <code>NONE</code> invoke permission. Details in
+      <a href="https://github.com/kroofy/Pixtega/blob/main/deploy/lambda/README.md">deploy/lambda/README.md</a>.
     </p>
 
     <h2 id="caveats">Caveats<a class="anchor" href="#caveats" aria-label="Link to this section">#</a></h2>

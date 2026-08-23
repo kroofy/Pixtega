@@ -129,7 +129,13 @@ Notes:
 - Configuration changes are just
   `aws lambda update-function-configuration --function-name pixtega --environment ...`.
 
-## 5. Create a Function URL
+## 5. Create a Function URL (smoke test only)
+
+> **Warning:** `--auth-type NONE` makes the URL publicly invokable by
+> anyone on the internet, with no CDN cache absorbing traffic and no
+> auth layer. Use it only for the smoke test below (and delete it or
+> front it afterwards); it is unsafe as a production internet-facing
+> endpoint.
 
 ```bash
 aws lambda create-function-url-config \
@@ -146,9 +152,23 @@ aws lambda add-permission \
   --region "$AWS_REGION"
 ```
 
-`--auth-type NONE` makes the URL public. Put a CDN (e.g. CloudFront) in
-front for production — the service's `Cache-Control` policy is designed
-for exactly that.
+### Production exposure
+
+Do not serve production traffic straight off a `NONE`-auth Function URL.
+Put CloudFront in front of it:
+
+- Create a CloudFront distribution with the Function URL domain as the
+  origin. The service's `Cache-Control` policy (year-long immutable for
+  versioned successes, bounded TTLs for the rest) is designed for exactly
+  this; most traffic never reaches the function.
+- Lock the origin to CloudFront: switch the Function URL to
+  `--auth-type AWS_IAM` and attach a CloudFront Origin Access Control
+  (OAC) for Lambda Function URLs, so only the distribution can invoke the
+  function. Then remove the public `NONE` permission added above
+  (`aws lambda remove-permission --function-name pixtega --statement-id public-url`).
+- Without OAC, at minimum keep the raw Function URL secret and monitor
+  invocations — but IAM auth + OAC is the supported way to prevent
+  callers from bypassing the CDN (and its cache) entirely.
 
 ## 6. Smoke test
 
