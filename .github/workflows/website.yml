@@ -8,13 +8,14 @@
 # - preview — ONE shared Worker `pixtega-preview` (not one Worker per
 #   PR, which would burn a script slot per PR). Runs on pull_request
 #   (opened/synchronize/reopened) touching the same paths, deploys the
-#   PR's website/ with `--name pixtega-preview` (overrides the name in
-#   wrangler.jsonc; prod config untouched), and keeps a sticky PR
-#   comment with the workers.dev URL. Because the Worker is shared, the
-#   most recent deploy from ANY PR is what is live: last deploy wins.
-#   The comment records PR number + short SHA so it's clear which
-#   revision was deployed. Skipped for PRs from forks — they cannot
-#   read the Cloudflare secrets.
+#   PR's website/ with `--env preview` (the env in wrangler.jsonc names
+#   the Worker and attaches custom domain preview.pixtega.com; prod
+#   top-level config untouched), and keeps a sticky PR comment leading
+#   with https://preview.pixtega.com (workers.dev URL as secondary).
+#   Because the Worker is shared, the most recent deploy from ANY PR is
+#   what is live: last deploy wins. The comment records PR number +
+#   short SHA so it's clear which revision was deployed. Skipped for
+#   PRs from forks — they cannot read the Cloudflare secrets.
 #
 # Wrangler 4 is current stable (4.125.x as of 2026-08-20). Pinned as
 # wrangler@4 so CI tracks latest 4.x without jumping majors.
@@ -64,7 +65,10 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx --yes wrangler@4 deploy
+        # --env "" targets the top-level (prod) environment explicitly;
+        # without it wrangler warns because wrangler.jsonc now defines
+        # a named `preview` environment too.
+        run: npx --yes wrangler@4 deploy --env ""
 
   preview:
     name: PR preview (shared Worker)
@@ -95,30 +99,31 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        # Capture the workers.dev URL wrangler prints; empty output if
-        # the print format ever changes (the comment step then points at
-        # the run logs instead of failing the job after a good deploy).
+        # The primary preview URL is the fixed custom domain
+        # preview.pixtega.com (attached by the env in wrangler.jsonc).
+        # Also capture the workers.dev URL wrangler prints as a
+        # secondary link; empty output if the print format ever changes
+        # (the comment step then just omits it — no failing the job
+        # after a good deploy).
         run: |
           set -o pipefail
-          npx --yes wrangler@4 deploy --name pixtega-preview | tee deploy-output.txt
+          npx --yes wrangler@4 deploy --env preview | tee deploy-output.txt
           url=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy-output.txt | head -n 1 || true)
-          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "workers_dev_url=$url" >> "$GITHUB_OUTPUT"
 
       - name: sticky PR comment with preview URL
         uses: actions/github-script@v9
         env:
-          PREVIEW_URL: ${{ steps.deploy.outputs.url }}
+          WORKERS_DEV_URL: ${{ steps.deploy.outputs.workers_dev_url }}
         with:
           script: |
             const marker = '<!-- pixtega-preview -->';
             const sha = context.payload.pull_request.head.sha.slice(0, 7);
-            const url = process.env.PREVIEW_URL;
-            const where = url
-              ? url
-              : 'deployed, but the URL was not found in wrangler output — see this run\'s logs';
+            const workersDev = process.env.WORKERS_DEV_URL;
             const body = [
               marker,
-              `**Docs preview** for PR #${context.issue.number} at \`${sha}\`: ${where}`,
+              `**Docs preview** for PR #${context.issue.number} at \`${sha}\`: https://preview.pixtega.com`,
+              ...(workersDev ? ['', `Also on workers.dev: ${workersDev}`] : []),
               '',
               'Shared preview Worker `pixtega-preview` — the most recent preview',
               'deploy from any PR is what is live (last deploy wins).',

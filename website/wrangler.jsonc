@@ -1,10 +1,35 @@
 // Pixtega docs site: a static Cloudflare Workers assets site.
 // Deploy from this directory with: npx wrangler deploy
+//
+// Top-level = production Worker `pixtega` (custom domain pixtega.com is
+// attached in the Cloudflare dashboard; not managed here).
+//
+// env.preview = the ONE shared PR-preview Worker `pixtega-preview`
+// (deploy with: npx wrangler deploy --env preview). Its custom domain
+// preview.pixtega.com IS managed here: `custom_domain: true` makes
+// wrangler create/update the DNS record in the pixtega.com zone on
+// deploy. `assets` is repeated in the env on purpose — explicit beats
+// relying on cross-environment inheritance rules.
 {
   "name": "pixtega",
   "compatibility_date": "2026-08-22",
   "assets": {
     "directory": "./public"
   },
-  "workers_dev": true
+  "workers_dev": true,
+  "env": {
+    "preview": {
+      "name": "pixtega-preview",
+      "assets": {
+        "directory": "./public"
+      },
+      "workers_dev": true,
+      "routes": [
+        {
+          "pattern": "preview.pixtega.com",
+          "custom_domain": true
+        }
+      ]
+    }
+  }
 }

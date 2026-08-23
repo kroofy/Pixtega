@@ -116,21 +116,28 @@ Two jobs:
 - **preview** — pull requests. On `pull_request`
   (opened/synchronize/reopened) touching the same paths, deploys the
   PR's `website/` to **one shared preview Worker** named
-  `pixtega-preview` via `wrangler deploy --name pixtega-preview`, and
-  posts/updates a sticky PR comment (marker `<!-- pixtega-preview -->`)
-  with the workers.dev preview URL plus the PR number and short SHA.
-  One shared Worker instead of one per PR keeps previews inside the
-  Workers free tier (limited script slots) — the trade-off is that the
-  most recent preview deploy from any PR is what is live (last deploy
-  wins; the comment says which revision that is). Skipped for PRs from
-  forks, which cannot read the Cloudflare secrets. Needs
-  `pull-requests: write` (sticky comment via `GITHUB_TOKEN`) in
-  addition to `contents: read`.
+  `pixtega-preview` via `wrangler deploy --env preview` — the `preview`
+  environment in `website/wrangler.jsonc` sets the Worker name and
+  attaches custom domain **<https://preview.pixtega.com>**
+  (`custom_domain: true`; wrangler creates/updates the DNS record in
+  the pixtega.com zone on deploy). Posts/updates a sticky PR comment
+  (marker `<!-- pixtega-preview -->`) leading with
+  preview.pixtega.com (workers.dev URL secondary) plus the PR number
+  and short SHA. One shared Worker instead of one per PR keeps
+  previews inside the Workers free tier (limited script slots) — the
+  trade-off is that the most recent preview deploy from any PR is what
+  is live (last deploy wins; the comment says which revision that is).
+  Skipped for PRs from forks, which cannot read the Cloudflare
+  secrets. Needs `pull-requests: write` (sticky comment via
+  `GITHUB_TOKEN`) in addition to `contents: read`.
 
 Both jobs run `npx --yes wrangler@4 deploy` from `website/` (no build
-step). Wrangler reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`
-from the environment; both must be set as repository secrets (Settings →
-Secrets and variables → Actions) before the first green deploy. The
-token needs Edit Cloudflare Workers.
+step; prod passes `--env ""` to target the top-level environment
+explicitly). Wrangler reads `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID` from the environment; both must be set as
+repository secrets (Settings → Secrets and variables → Actions) before
+the first green deploy. The token needs Edit Cloudflare Workers — and,
+for the preview custom-domain provisioning, likely Zone → DNS → Edit
+on the pixtega.com zone.
 
 See [website/README.md](../website/README.md).
