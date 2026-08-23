@@ -131,12 +131,12 @@ impl HttpSource {
 
             // Advertised length check; the header may be absent or false,
             // so the limit is enforced again below while streaming.
-            if let Some(advertised) = response
+            let advertised = response
                 .headers()
                 .get(CONTENT_LENGTH)
                 .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.trim().parse::<u64>().ok())
-            {
+                .and_then(|value| value.trim().parse::<u64>().ok());
+            if let Some(advertised) = advertised {
                 if advertised > self.limits.max_bytes {
                     return Err(SourceError::TooLarge {
                         upstream_status: Some(code),
@@ -144,7 +144,10 @@ impl HttpSource {
                 }
             }
 
-            let mut bytes: Vec<u8> = Vec::new();
+            // Preallocate from the advertised length (already bounded by
+            // max_bytes above) so large bodies avoid the repeated
+            // grow-and-copy of an amortized Vec.
+            let mut bytes: Vec<u8> = Vec::with_capacity(advertised.unwrap_or(0) as usize);
             let mut stream = response.bytes_stream();
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk.map_err(map_reqwest_error)?;

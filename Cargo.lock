@@ -1883,6 +1883,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "image",
+ "libc",
  "libvips",
  "rcgen",
  "reqwest",
