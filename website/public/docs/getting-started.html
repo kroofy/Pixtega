@@ -5,89 +5,115 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Getting started — Pixtega</title>
   <meta name="description" content="Run Pixtega locally with cargo or in a container with Docker.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2' y='2' width='20' height='20' rx='5' fill='%234338ca'/%3E%3Ccircle cx='9' cy='9' r='2.2' fill='white'/%3E%3Cpath d='M4.5 17.5l4.5-5 3.5 4 3-3.5 4 4.5z' fill='white'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <header class="site">
   <div class="inner">
-    <a class="brand" href="/">Pixtega</a>
+    <a class="brand" href="/">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" fill="currentColor"/><circle cx="9" cy="9" r="2.2" fill="var(--bg)"/><path d="M4.5 17.5l4.5-5 3.5 4 3-3.5 4 4.5z" fill="var(--bg)"/></svg>
+      Pixtega
+    </a>
     <nav>
-      <a href="/docs/getting-started.html" aria-current="page">Getting started</a>
-      <a href="/docs/configuration.html">Configuration</a>
-      <a href="/docs/api.html">API</a>
-      <a href="/docs/aws-lambda.html">AWS Lambda</a>
+      <a href="/docs/getting-started.html" aria-current="page">Docs</a>
       <a href="https://github.com/kroofy/Pixtega">GitHub</a>
     </nav>
   </div>
 </header>
 
-<main>
-  <h1>Getting started</h1>
-  <p class="lead">
-    Pixtega ships as a single Rust binary named <code>pixtega</code>.
-    Run it locally with cargo or in a container — the repository bundles
-    fixture images so the quick start needs no network access.
-  </p>
+<div class="layout">
+  <aside class="sidebar">
+    <nav aria-label="Documentation">
+      <span class="sidebar-title">Documentation</span>
+      <a href="/docs/getting-started.html" aria-current="page">Getting started</a>
+      <a href="/docs/configuration.html">Configuration</a>
+      <a href="/docs/api.html">API reference</a>
+      <a href="/docs/aws-lambda.html">AWS Lambda</a>
+    </nav>
+  </aside>
 
-  <h2>Quick start (bundled fixtures, no network)</h2>
-  <pre><code>git clone https://github.com/kroofy/Pixtega.git
+  <main>
+    <h1>Getting started</h1>
+    <p class="lead">
+      Pixtega ships as a single Rust binary named <code>pixtega</code>.
+      Run it locally with cargo or in a container — the repository bundles
+      fixture images so the quick start needs no network access.
+    </p>
+
+    <h2 id="quick-start">Quick start (bundled fixtures, no network)<a class="anchor" href="#quick-start" aria-label="Link to this section">#</a></h2>
+    <pre><code>git clone https://github.com/kroofy/Pixtega.git
 cd Pixtega
 cargo run -- config.local.toml
 # in another shell:
 curl -o out.webp 'http://127.0.0.1:8080/images/fixtures/photos/example.jpg/w640.webp'</code></pre>
-  <p>
-    <code>config.local.toml</code> serves the bundled <code>fixtures/</code>
-    directory through a filesystem source mounted at <code>fixtures</code>.
-    The response is a 640-pixel-wide WebP derived from the bundled JPEG.
-  </p>
+    <p>
+      <code>config.local.toml</code> serves the bundled <code>fixtures/</code>
+      directory through a filesystem source mounted at <code>fixtures</code>.
+      The response is a 640-pixel-wide WebP derived from the bundled JPEG.
+    </p>
 
-  <h2>Build dependencies</h2>
-  <p>
-    The service encodes with libvips, so building from source needs the
-    libvips development headers.
-  </p>
+    <h2 id="build-dependencies">Build dependencies<a class="anchor" href="#build-dependencies" aria-label="Link to this section">#</a></h2>
+    <p>
+      The service encodes with libvips, so building from source needs the
+      libvips development headers.
+    </p>
 
-  <h3>Linux (Debian/Ubuntu)</h3>
-  <pre><code>sudo apt-get install libvips-dev libheif-plugin-aomenc pkg-config
+    <h3>Linux (Debian/Ubuntu)</h3>
+    <pre><code>sudo apt-get install libvips-dev libheif-plugin-aomenc pkg-config
 cargo run -- config.local.toml</code></pre>
-  <p>
-    Ubuntu splits libheif encoders into plugin packages. Without
-    <code>libheif-plugin-aomenc</code>, AVIF encoding is unavailable and the
-    service refuses to start when <code>[formats.avif]</code> is enabled —
-    it verifies every enabled encoder at startup.
-  </p>
+    <p>
+      Ubuntu splits libheif encoders into plugin packages. Without
+      <code>libheif-plugin-aomenc</code>, AVIF encoding is unavailable and the
+      service refuses to start when <code>[formats.avif]</code> is enabled —
+      it verifies every enabled encoder at startup.
+    </p>
 
-  <h3>macOS</h3>
-  <pre><code>brew install vips pkg-config
+    <h3>macOS</h3>
+    <pre><code>brew install vips pkg-config
 cargo run -- config.local.toml</code></pre>
-  <p>Homebrew's <code>vips</code> includes AVIF support via libheif.</p>
+    <p>Homebrew's <code>vips</code> includes AVIF support via libheif.</p>
 
-  <h2>Docker</h2>
-  <pre><code>docker build -t pixtega .
+    <h2 id="docker">Docker<a class="anchor" href="#docker" aria-label="Link to this section">#</a></h2>
+    <pre><code>docker build -t pixtega .
 docker run --rm -p 8080:8080 pixtega            # serves config.example.toml
 docker run --rm -p 8080:8080 \
   -v "$PWD/myconfig.toml:/config/config.toml:ro" \
   pixtega /config/config.toml</code></pre>
-  <p>
-    The image's default command serves
-    <a href="/docs/configuration.html"><code>config.example.toml</code></a>,
-    which listens on <code>0.0.0.0:8080</code> and includes the bundled
-    fixtures mount. Pass your own TOML path as the container command to
-    replace it.
-  </p>
+    <p>
+      The image's default command serves
+      <a href="/docs/configuration.html"><code>config.example.toml</code></a>,
+      which listens on <code>0.0.0.0:8080</code> and includes the bundled
+      fixtures mount. Pass your own TOML path as the container command to
+      replace it.
+    </p>
 
-  <h2>Next steps</h2>
-  <ul>
-    <li><a href="/docs/configuration.html">Configuration</a> — the full TOML schema, precedence, and validation rules.</li>
-    <li><a href="/docs/api.html">API reference</a> — URL grammar, caching, and the error taxonomy.</li>
-    <li><a href="/docs/aws-lambda.html">Deploy on AWS Lambda</a> — the recommended serverless deployment path.</li>
-  </ul>
-</main>
+    <h2 id="next-steps">Next steps<a class="anchor" href="#next-steps" aria-label="Link to this section">#</a></h2>
+    <ul>
+      <li><a href="/docs/configuration.html">Configuration</a> — the full TOML schema, precedence, and validation rules.</li>
+      <li><a href="/docs/api.html">API reference</a> — URL grammar, caching, and the error taxonomy.</li>
+      <li><a href="/docs/aws-lambda.html">Deploy on AWS Lambda</a> — the recommended serverless deployment path.</li>
+    </ul>
+
+    <nav class="pager" aria-label="Docs pages">
+      <a class="next" href="/docs/configuration.html">
+        <span class="pager-label">Next</span>
+        <span class="pager-title">Configuration</span>
+      </a>
+    </nav>
+  </main>
+</div>
 
 <footer class="site">
   <div class="inner">
-    Pixtega is MIT licensed ·
-    <a href="https://github.com/kroofy/Pixtega">github.com/kroofy/Pixtega</a>
+    <span>Pixtega is MIT licensed</span>
+    <nav>
+      <a href="/docs/getting-started.html">Getting started</a>
+      <a href="/docs/configuration.html">Configuration</a>
+      <a href="/docs/api.html">API</a>
+      <a href="/docs/aws-lambda.html">AWS Lambda</a>
+      <a href="https://github.com/kroofy/Pixtega">GitHub</a>
+    </nav>
   </div>
 </footer>
 </body>
