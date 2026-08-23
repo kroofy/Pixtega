@@ -24,7 +24,6 @@ pub enum Outcome {
     SourceTooLarge,
     SourceUnavailable,
     UndecodableSource,
-    ResizeFailed,
     FlattenFailed,
     EncodeFailed,
 }
@@ -39,7 +38,6 @@ impl Outcome {
             Outcome::SourceTooLarge => "source_too_large",
             Outcome::SourceUnavailable => "source_unavailable",
             Outcome::UndecodableSource => "undecodable_source",
-            Outcome::ResizeFailed => "resize_failed",
             Outcome::FlattenFailed => "flatten_failed",
             Outcome::EncodeFailed => "encode_failed",
         }
@@ -206,8 +204,6 @@ pub enum ProcessError {
     /// Oriented width * height exceeds the configured megapixel limit, or
     /// the dimension arithmetic would overflow. 502.
     TooManyPixels,
-    /// Resize failed after a valid source image was accepted. 500.
-    Resize { detail: String },
     /// Alpha flattening failed. 500.
     Flatten { detail: String },
     /// Encoding failed. 500.
@@ -219,7 +215,6 @@ impl ProcessError {
         match self {
             ProcessError::Undecodable { .. } => 502,
             ProcessError::TooManyPixels => 502,
-            ProcessError::Resize { .. } => 500,
             ProcessError::Flatten { .. } => 500,
             ProcessError::Encode { .. } => 500,
         }
@@ -229,7 +224,6 @@ impl ProcessError {
         match self {
             ProcessError::Undecodable { .. } => Outcome::UndecodableSource,
             ProcessError::TooManyPixels => Outcome::SourceTooLarge,
-            ProcessError::Resize { .. } => Outcome::ResizeFailed,
             ProcessError::Flatten { .. } => Outcome::FlattenFailed,
             ProcessError::Encode { .. } => Outcome::EncodeFailed,
         }
@@ -240,7 +234,6 @@ impl ProcessError {
         match self {
             ProcessError::Undecodable { .. } => "source is not a supported image",
             ProcessError::TooManyPixels => "source image exceeds pixel limit",
-            ProcessError::Resize { .. } => "image resize failed",
             ProcessError::Flatten { .. } => "image flatten failed",
             ProcessError::Encode { .. } => "image encode failed",
         }

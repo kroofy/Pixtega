@@ -7,7 +7,6 @@
 use serde::Serialize;
 
 use crate::errors::Outcome;
-use crate::types::OutputFormat;
 
 /// One request-completion event, serialized as a single JSON line.
 #[derive(Debug, Serialize)]
@@ -44,12 +43,6 @@ impl CompletionEvent {
             output_bytes: None,
             elapsed_ms,
         }
-    }
-
-    pub fn with_transform(mut self, width: u32, format: OutputFormat) -> Self {
-        self.width = Some(width);
-        self.format = Some(format.as_str());
-        self
     }
 
     /// Write the event as one JSON line to standard output.

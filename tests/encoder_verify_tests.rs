@@ -13,9 +13,11 @@ use image::{DynamicImage, RgbImage};
 use pixtega::processor::{process_image, verify_encoders};
 use pixtega::types::{OutputFormat, Transform};
 
+const ALL_FORMATS: [OutputFormat; 3] = [OutputFormat::Webp, OutputFormat::Avif, OutputFormat::Jpeg];
+
 #[test]
 fn verify_encoders_initializes_the_runtime_and_probes_every_encoder() {
-    verify_encoders(&OutputFormat::all()).expect("all enabled encoders must verify");
+    verify_encoders(&ALL_FORMATS).expect("all enabled encoders must verify");
 
     // The service processes images right after startup verification with no
     // further initialization; that must work in this fresh process too.
@@ -25,7 +27,7 @@ fn verify_encoders_initializes_the_runtime_and_probes_every_encoder() {
         .write_to(&mut buf, image::ImageFormat::Jpeg)
         .expect("fixture JPEG encode");
     let source = buf.into_inner();
-    for format in OutputFormat::all() {
+    for format in ALL_FORMATS {
         process_image(
             &source,
             &Transform {

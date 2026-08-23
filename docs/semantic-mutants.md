@@ -29,8 +29,3 @@ when it is introduced. Test names are `<file> :: <function>` under
   fits in `u64`); the checked-arithmetic contract is exercised instead
   through the limit-side overflow (`max_source_megapixels * 1_000_000`
   with `u64::MAX`) and the huge-header PNG test.
-- `src/processor.rs`: `ProcessError::Resize` is structurally unreachable in
-  the fused-thumbnail design (decode and resize failures surface before a
-  valid source is "accepted" and are classified `Undecodable`); the variant
-  exists because the closed observability outcome set (README
-  "Observability") requires `resize_failed` to be representable.

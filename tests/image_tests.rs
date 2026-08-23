@@ -15,7 +15,7 @@ use std::io::Cursor;
 use image::{DynamicImage, GenericImageView, RgbImage, RgbaImage};
 use libvips::VipsImage;
 use pixtega::errors::ProcessError;
-use pixtega::processor::{init_vips, process_image, verify_encoders};
+use pixtega::processor::{init_vips, process_image};
 use pixtega::types::{OutputFormat, Transform};
 
 // ---------------------------------------------------------------- helpers
@@ -236,6 +236,8 @@ fn assert_too_many_pixels(result: Result<Vec<u8>, ProcessError>, what: &str) {
 
 const MP: u64 = 100; // generous default megapixel limit for happy paths
 
+const ALL_FORMATS: [OutputFormat; 3] = [OutputFormat::Webp, OutputFormat::Avif, OutputFormat::Jpeg];
+
 // ------------------------------------------------------------------ tests
 
 #[test]
@@ -251,7 +253,7 @@ fn downscale_preserves_aspect_ratio() {
 fn narrow_source_is_never_upscaled() {
     init_vips();
     let source = jpeg_fixture(400, 300);
-    for format in OutputFormat::all() {
+    for format in ALL_FORMATS {
         let out = process_image(&source, &tf(1920, format, 80), MP).unwrap();
         let (w, h) = match format {
             OutputFormat::Avif => {
@@ -272,7 +274,7 @@ fn narrow_source_is_never_upscaled() {
 fn outputs_have_requested_dimensions_and_container_signatures() {
     init_vips();
     let source = jpeg_fixture(800, 600);
-    for format in OutputFormat::all() {
+    for format in ALL_FORMATS {
         let out = process_image(&source, &tf(320, format, 80), MP).unwrap();
         match format {
             OutputFormat::Jpeg => {
@@ -684,11 +686,4 @@ fn animated_webp_is_rejected_by_the_page_count_check() {
         ),
         other => panic!("expected Undecodable, got {other:?}"),
     }
-}
-
-#[test]
-fn verify_encoders_succeeds_for_every_enabled_format() {
-    init_vips();
-    verify_encoders(&OutputFormat::all()).expect("all enabled encoders must verify");
-    verify_encoders(&[OutputFormat::Avif]).expect("AVIF encoder must verify at runtime");
 }

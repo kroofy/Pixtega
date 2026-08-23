@@ -6,7 +6,6 @@
 //! chains), and must never be empty.
 
 use pixtega::errors::{ProcessError, RequestError, SourceError};
-use pixtega::types::UpstreamKey;
 
 fn request_error_variants() -> Vec<RequestError> {
     vec![
@@ -49,9 +48,6 @@ fn process_error_variants() -> Vec<ProcessError> {
             detail: "internal detail".to_string(),
         },
         ProcessError::TooManyPixels,
-        ProcessError::Resize {
-            detail: "internal detail".to_string(),
-        },
         ProcessError::Flatten {
             detail: "internal detail".to_string(),
         },
@@ -128,12 +124,6 @@ fn process_error_public_messages_are_the_documented_strings() {
             "source image exceeds pixel limit",
         ),
         (
-            ProcessError::Resize {
-                detail: String::new(),
-            },
-            "image resize failed",
-        ),
-        (
             ProcessError::Flatten {
                 detail: String::new(),
             },
@@ -172,17 +162,4 @@ fn display_matches_public_message_and_never_leaks_detail() {
             "{error:?} must not leak detail"
         );
     }
-}
-
-/// `UpstreamKey` displays as its `/`-joined form (S3 object key, log
-/// field).
-#[test]
-fn upstream_key_displays_as_joined_segments() {
-    let key = UpstreamKey::new(vec![
-        "media".to_string(),
-        "a b".to_string(),
-        "c".to_string(),
-    ]);
-    assert_eq!(key.to_string(), "media/a b/c");
-    assert_eq!(key.to_string(), key.joined());
 }

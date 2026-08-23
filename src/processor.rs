@@ -39,9 +39,7 @@
 //! 502) because no valid source image has been accepted yet and the
 //! service's own arithmetic cannot fail there; failures after that point
 //! are pipeline errors ([`ProcessError::Flatten`] / [`ProcessError::Encode`],
-//! 500). [`ProcessError::Resize`] is reserved for explicit post-acceptance
-//! geometry operations; the fused thumbnail pipeline performs none, so this
-//! implementation never emits it.
+//! 500).
 //!
 //! The process-wide libvips runtime is initialized exactly once via
 //! [`init_vips`]. Native handles are never cloned or double-released: every
@@ -212,8 +210,9 @@ pub fn process_image(
     // Fused decode + auto-rotate + downscale-only resize. `height` is set
     // to the operation maximum so the requested width is the only
     // constraint; `Size::Down` keeps a narrower source at its original
-    // dimensions (never upscale).
-    let target_width = transform.width.min(10_000_000) as i32;
+    // dimensions (never upscale). Widths are capped at 16384 by request
+    // parsing and configuration, so the i32 cast cannot truncate.
+    let target_width = transform.width as i32;
     // Binding quirks, verified against libvips 8.15 + libvips-rust 1.6.1:
     // - The bindings pass every option unconditionally, and an empty
     //   profile string makes libvips try to load an ICC profile from the

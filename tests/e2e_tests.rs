@@ -122,7 +122,7 @@ fn parse_listening_line(line: &str) -> Option<SocketAddr> {
 // Completion-log assertions
 // ---------------------------------------------------------------------------
 
-const CLOSED_OUTCOMES: [&str; 10] = [
+const CLOSED_OUTCOMES: [&str; 9] = [
     "success",
     "rejected_request",
     "not_found",
@@ -130,7 +130,6 @@ const CLOSED_OUTCOMES: [&str; 10] = [
     "source_too_large",
     "source_unavailable",
     "undecodable_source",
-    "resize_failed",
     "flatten_failed",
     "encode_failed",
 ];
