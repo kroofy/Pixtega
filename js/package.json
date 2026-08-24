@@ -1,0 +1,12 @@
+{
+  "name": "pixtega-js-workspace",
+  "private": true,
+  "workspaces": [
+    "pixtega",
+    "url"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces"
+  }
+}
