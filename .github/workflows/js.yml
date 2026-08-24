@@ -1,0 +1,38 @@
+# Build and test the npm packages in js/ (pixtega and @pixtega/url).
+# Runs only when js/ or this workflow changes; the Rust CI is unaffected.
+
+name: JS client
+
+on:
+  pull_request:
+    paths:
+      - "js/**"
+      - ".github/workflows/js.yml"
+  push:
+    branches: [main]
+    paths:
+      - "js/**"
+      - ".github/workflows/js.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: js-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: js/package-lock.json
+      - run: npm ci
+      - run: npm test
