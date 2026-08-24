@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install libvips and AVIF encoder plugins
         run: |
@@ -72,9 +72,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # Build the exact image the script would build, but through buildx with
       # GitHub Actions layer caching. The Dockerfile compiles dependencies in
@@ -83,7 +83,7 @@ jobs:
       # mode=max also caches the build-stage layers (the dependency layer
       # lives there); the default mode would cache only the runtime stage.
       - name: Build image with GHA layer cache
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           tags: pixtega-acceptance:local
