@@ -768,9 +768,9 @@ struct TlsFixture {
 /// TLS fixture server: rcgen CA + leaf for SAN "localhost" only (no IP SAN),
 /// served with tokio-rustls. Answers every request with a fixed 200 body.
 async fn start_tls_fixture(body: &'static [u8]) -> TlsFixture {
-    // Both `ring` and `aws-lc-rs` providers are enabled through feature
-    // unification, so a process default must be installed explicitly.
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    // reqwest 0.13 unifies rustls onto aws-lc-rs (no `ring` feature).
+    // A process default must still be installed for the fixture server.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let ca_key = rcgen::KeyPair::generate().unwrap();
     let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();

@@ -41,7 +41,7 @@ impl HttpSource {
     pub fn new(config: &HttpSourceConfig, limits: FetchLimits) -> Result<Self, ConfigError> {
         let mut builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            .use_rustls_tls()
+            .tls_backend_rustls()
             // Belt: per-request timeout; the adapter additionally wraps the
             // whole exchange (all hops + body) in one tokio timeout.
             .timeout(limits.timeout)
@@ -66,9 +66,8 @@ impl HttpSource {
                     ca_path.display()
                 )));
             }
-            for certificate in certificates {
-                builder = builder.add_root_certificate(certificate);
-            }
+            // Exclusive trust store for this source (fixture / private CAs).
+            builder = builder.tls_certs_only(certificates);
         }
 
         let client = builder
