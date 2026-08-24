@@ -4,3 +4,10 @@
 website/.wrangler/
 website/node_modules/
 /bench/
+
+# Personal local configs (config.local.toml stays tracked: fixtures-only quickstart)
+config.private.toml
+config.*.private.toml
+*.local.private.toml
+.env
+.env.*
