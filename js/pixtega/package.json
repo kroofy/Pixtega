@@ -24,7 +24,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --sourcemap --clean",
+    "build": "tsup src/index.ts --format esm,cjs --sourcemap --clean && tsc -p tsconfig.build.json && cp dist/index.d.ts dist/index.d.cts",
     "prepack": "npm run build",
     "test": "npm run build && node --test"
   },
@@ -51,7 +51,7 @@
     "url"
   ],
   "devDependencies": {
-    "tsup": "^8.5.0",
-    "typescript": "^5.9.2"
+    "tsup": "^8.5.1",
+    "typescript": "^7.0.2"
   }
 }
