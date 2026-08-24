@@ -5,6 +5,9 @@
     "pixtega",
     "url"
   ],
+  "overrides": {
+    "esbuild": "^0.28.1"
+  },
   "scripts": {
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces"
