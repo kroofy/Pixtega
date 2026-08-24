@@ -5,6 +5,10 @@ edition = "2021"
 rust-version = "1.98"
 license = "MIT"
 description = "On-demand image derivation service: fetches a source image, derives a bounded variant, returns cacheable bytes."
+repository = "https://github.com/kroofy/Pixtega"
+homepage = "https://pixtega.com"
+documentation = "https://pixtega.com/docs/getting-started.html"
+readme = "README.md"
 
 [dependencies]
 async-trait = "0.1"
