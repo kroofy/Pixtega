@@ -37,6 +37,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 
 WORKDIR /app
 COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
+COPY vendor/crc-fast ./vendor/crc-fast
 # rustup installs the toolchain pinned by rust-toolchain.toml on first use.
 RUN rustup show active-toolchain || rustup toolchain install
 

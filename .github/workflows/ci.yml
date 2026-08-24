@@ -78,7 +78,7 @@ jobs:
 
       # Build the exact image the script would build, but through buildx with
       # GitHub Actions layer caching. The Dockerfile compiles dependencies in
-      # a layer keyed on Cargo.lock alone, so source-only changes reuse the
+      # a layer keyed on Cargo.lock + vendor/crc-fast, so source-only changes reuse the
       # cached dependency layer and skip the ~6-minute dependency compile.
       # mode=max also caches the build-stage layers (the dependency layer
       # lives there); the default mode would cache only the runtime stage.

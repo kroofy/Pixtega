@@ -23,11 +23,12 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 
 WORKDIR /app
 COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
+COPY vendor/crc-fast ./vendor/crc-fast
 # rustup installs the toolchain pinned by rust-toolchain.toml on first use.
 RUN rustup show active-toolchain || rustup toolchain install
 
 # Compile dependencies against stub sources so they land in their own layer,
-# keyed on Cargo.lock alone. Source-only changes then rebuild just this crate.
+# keyed on Cargo.lock + vendor/crc-fast. Source-only changes then rebuild just this crate.
 RUN mkdir src \
     && echo '' > src/lib.rs \
     && echo 'fn main() {}' > src/main.rs \

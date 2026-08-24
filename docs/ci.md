@@ -18,8 +18,8 @@ Runs on every pull request and every push to `main`. Two jobs:
   then runs `./scripts/container-acceptance.sh` with `PIXTEGA_SKIP_BUILD=1`
   to start the image and assert a 200 `image/webp` WebP body from the
   fixtures success case. The Dockerfile compiles dependencies in a layer
-  keyed on `Cargo.lock` alone, so source-only changes reuse the cached
-  dependency layer; a `Cargo.lock` change pays one full recompile, then
+  keyed on `Cargo.lock` + `vendor/crc-fast`, so source-only changes reuse the cached
+  dependency layer; a lockfile or vendor change pays one full recompile, then
   re-caches. Run locally without any env vars — the script then builds
   the image itself.
 
