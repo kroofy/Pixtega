@@ -1,6 +1,10 @@
 //! Process bootstrap: load configuration, initialize libvips, verify the
 //! enabled encoders, build the Source registry, and serve.
 
+// All FFI lives in the library crate (`processor::vips_ffi`); the binary
+// itself must stay entirely safe.
+#![deny(unsafe_code)]
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 
