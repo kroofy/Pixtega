@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { pixtegaPicture, pixtegaSrcSet, pixtegaUrl } from "../dist/index.js";
+import { pixtegaPicture, pixtegaSrcSet, pixtegaUrl } from "pixtega";
 
 const base = "https://images.example.com";
 

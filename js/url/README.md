@@ -9,6 +9,9 @@ whichever name you prefer.
 npm install @pixtega/url
 ```
 
+TypeScript source, same as `pixtega`. Node 22.6+ strips types on import;
+bundlers compile it as usual.
+
 ```js
 import { pixtegaUrl, pixtegaSrcSet, pixtegaPicture } from "@pixtega/url";
 

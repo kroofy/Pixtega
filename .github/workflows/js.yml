@@ -1,4 +1,4 @@
-# Build and test the npm packages in js/ (pixtega and @pixtega/url).
+# Typecheck and test the npm packages in js/ (pixtega and @pixtega/url).
 # Runs only when js/ or this workflow changes; the Rust CI is unaffected.
 
 name: JS client

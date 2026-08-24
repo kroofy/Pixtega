@@ -51,9 +51,11 @@ so put the most widely supported format last.
 
 ## Development
 
+The packages ship TypeScript source. Types are the `.ts` files. Node 22.6+
+strips types on import; bundlers compile them as usual. No build step.
+
 ```bash
 cd js
 npm install   # workspace: links @pixtega/url against the local pixtega
-npm run build
 npm test
 ```
