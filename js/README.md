@@ -13,12 +13,12 @@ npm install pixtega
 npm install @pixtega/url
 ```
 
-The client builds strings and never fetches. It validates everything the
-server's URL grammar fixes (segment encoding, transform shape, the `v`
-token alphabet), but it cannot know your server's configured width and
-quality allowlists; a URL this client accepts is still rejected with a 400
-if the width or quality is not allowlisted, or if a quality equals the
-format's default (omit `quality` to use the default).
+The client builds strings and never fetches. It rejects everything the
+server's fixed URL grammar rejects (segment encoding, transform shape,
+the `v` token alphabet), but it cannot know your server's configured
+width and quality allowlists. A URL this client accepts can still get a
+400: a width or quality outside the allowlist, or an explicit quality
+equal to the format's default (omit `quality` to use the default).
 
 ## API
 

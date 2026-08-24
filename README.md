@@ -175,12 +175,11 @@ credential provider chain: environment variables
 (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`), shared config/credentials
 files and profiles, and instance/task roles.
 
-The service needs `s3:GetObject` on the configured prefix. Note that with
-`GetObject` permission alone, S3 answers a missing key with 403 instead of
-404 unless the principal also has `s3:ListBucket`; without list permission
-every missing object is reported (correctly, per the error taxonomy) as
-502 source-unavailable rather than 404. Grant `s3:ListBucket` on the bucket
-if you want missing keys to become cacheable 404s.
+The service needs `s3:GetObject` on the configured prefix. With
+`GetObject` alone, S3 answers a missing key with 403, which the service
+reports (correctly, per the error taxonomy) as 502 source-unavailable.
+Grant `s3:ListBucket` on the bucket if you want missing keys to become
+cacheable 404s.
 
 ## Running
 
@@ -277,8 +276,9 @@ Full details in [docs/ci.md](docs/ci.md).
   (weekly on `main` + manual dispatch) runs the full `cargo mutants`
   suite, publishes the score in the run's job summary and a
   `mutants-report` artifact (`mutants-score.json` + the full
-  `mutants.out/` report), and fails below 90%. Latest recorded score:
-  the most recent [Mutants run](https://github.com/kroofy/Pixtega/actions/workflows/mutants.yml)
+  `mutants.out/` report), and fails below 90%. The latest recorded score
+  is in the job summary of the most recent
+  [Mutants run](https://github.com/kroofy/Pixtega/actions/workflows/mutants.yml)
   (badge above).
 - **Releases**: `git tag vX.Y.Z && git push origin vX.Y.Z` builds and
   pushes `ghcr.io/kroofy/pixtega` images (`X.Y.Z`, `X.Y`, `latest`, and
