@@ -170,10 +170,12 @@ another reason to point sources only at origins you control.
 
 ## S3 credentials and permissions
 
-Credentials are never read from TOML. The adapter uses the standard AWS SDK
+Credentials are never read from TOML. The adapter uses the AWS SDK
 credential provider chain: environment variables
 (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`), shared config/credentials
-files and profiles, and instance/task roles.
+files and profiles, process credentials, and instance/task roles.
+IAM Identity Center (SSO) profiles are not enabled (`aws-config` `sso`
+feature off) until upstream drops `sha1` 0.10 / `block-buffer` 0.10.4.
 
 The service needs `s3:GetObject` on the configured prefix. With
 `GetObject` alone, S3 answers a missing key with 403, which the service

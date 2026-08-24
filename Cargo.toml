@@ -13,8 +13,11 @@ readme = "README.md"
 [dependencies]
 async-trait = "0.1"
 axum = "0.8"
-aws-config = { version = "1", features = ["behavior-version-latest"] }
-aws-sdk-s3 = { version = "1", default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
+# default-features dropped `sso` (sha1 0.10 → block-buffer 0.10.4, GHSA-qwgh-2vcv-g2f7).
+# Env, profile, process, and IMDS/task-role credentials still work.
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio", "credentials-process"] }
+# sigv4a dropped: p256 0.13 → digest 0.10 → the same block-buffer 0.10.4. Regular SigV4 is enough for GetObject.
+aws-sdk-s3 = { version = "1", default-features = false, features = ["http-1x", "default-https-client", "rt-tokio"] }
 futures-util = "0.3"
 libc = "0.2"
 libvips = "=2.3.0"
@@ -40,3 +43,8 @@ path = "src/lib.rs"
 [[bin]]
 name = "pixtega"
 path = "src/main.rs"
+
+# crc-fast 1.10.0 pins digest 0.10 (block-buffer 0.10.4). Drop when crc-fast
+# depends on digest >= 0.11 (or aws-smithy-checksums stops needing crc-fast).
+[patch.crates-io]
+crc-fast = { path = "vendor/crc-fast" }
