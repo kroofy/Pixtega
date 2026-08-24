@@ -168,8 +168,8 @@ fn animated_gif_fixture() -> Vec<u8> {
 /// whitelist, so this is the way to exercise the animation rule on an
 /// otherwise accepted container. `new_from_buffer` with an `n=-1` option
 /// string is used instead of `ops::gifload_buffer_with_opts`, which
-/// segfaults in libvips 1.6.1 (it passes the read-only `flags` property
-/// through the varargs setter).
+/// segfaults (still in the 2.3.0 bindings: it passes the read-only
+/// `flags` property through the varargs setter).
 fn animated_webp_fixture() -> Vec<u8> {
     let gif = animated_gif_fixture();
     let all_pages = VipsImage::new_from_buffer(&gif, "n=-1").expect("fixture: gifload all pages");

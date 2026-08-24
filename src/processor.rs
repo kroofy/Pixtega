@@ -32,7 +32,7 @@
 //! 5. For JPEG output only, flatten transparency onto white
 //!    ([`ProcessError::Flatten`] on failure). WebP and AVIF preserve alpha.
 //! 6. Encode with the resolved quality, stripping all source metadata
-//!    (`strip=true`). AVIF is heifsave with AV1 compression at 8-bit depth.
+//!    (`keep=None`). AVIF is heifsave with AV1 compression at 8-bit depth.
 //!
 //! Error classification: everything up to and including the materialized
 //! decode is attributed to the source bytes ([`ProcessError::Undecodable`],
@@ -52,8 +52,8 @@
 use std::sync::OnceLock;
 
 use libvips::ops::{
-    self, FlattenOptions, ForeignHeifCompression, HeifsaveBufferOptions, JpegsaveBufferOptions,
-    Size, ThumbnailBufferOptions, WebpsaveBufferOptions,
+    self, FlattenOptions, ForeignHeifCompression, ForeignKeep, HeifsaveBufferOptions,
+    JpegsaveBufferOptions, Size, ThumbnailBufferOptions, WebpsaveBufferOptions,
 };
 use libvips::{VipsApp, VipsImage};
 
@@ -209,23 +209,22 @@ pub fn process_image(
     // dimensions (never upscale). Widths are capped at 16384 by request
     // parsing and configuration, so the i32 cast cannot truncate.
     let target_width = transform.width as i32;
-    // Binding quirks, verified against libvips 8.15 + libvips-rust 1.6.1:
-    // - The bindings pass every option unconditionally, and an empty
-    //   profile string makes libvips try to load an ICC profile from the
-    //   file "". Point both fallbacks at the built-in sRGB profile; output
-    //   is then normalized to sRGB, which is what the encoders expect.
-    // - The `fail_on` struct field does not reach the underlying loader,
-    //   so corrupt input would decode partially. Passing `fail-on=error`
-    //   through the loader option string does work; corrupt or truncated
-    //   pixel data then errors at evaluation time below.
+    // Verified against libvips 8.18 + libvips-rust 2.3.0:
+    // - Both profile fallbacks point at the built-in sRGB profile, so
+    //   output is normalized to sRGB, which is what the encoders expect.
+    // - The `fail_on` struct field still does not reach the underlying
+    //   loader (same quirk as the 1.6.1 bindings), so corrupt input would
+    //   decode partially. Passing `fail-on=error` through the loader
+    //   option string does work; corrupt or truncated pixel data then
+    //   errors at evaluation time below.
     // `no_rotate` is left at its default `false`: EXIF orientation is
     // applied before the resize.
     let thumb_options = ThumbnailBufferOptions {
-        option_string: "fail-on=error".to_string(),
+        option_string: Some("fail-on=error".to_string()),
         height: 10_000_000,
         size: Size::Down,
-        import_profile: "srgb".to_string(),
-        export_profile: "srgb".to_string(),
+        input_profile: Some("srgb".to_string()),
+        output_profile: Some("srgb".to_string()),
         ..ThumbnailBufferOptions::default()
     };
     let resized = ops::thumbnail_buffer_with_opts(source_bytes, target_width, &thumb_options)
@@ -270,7 +269,7 @@ fn encode(
             image,
             &JpegsaveBufferOptions {
                 q: quality,
-                strip: true,
+                keep: ForeignKeep::None,
                 ..JpegsaveBufferOptions::default()
             },
         ),
@@ -278,7 +277,7 @@ fn encode(
             image,
             &WebpsaveBufferOptions {
                 q: quality,
-                strip: true,
+                keep: ForeignKeep::None,
                 ..WebpsaveBufferOptions::default()
             },
         ),
@@ -288,7 +287,7 @@ fn encode(
                 q: quality,
                 bitdepth: 8,
                 compression: ForeignHeifCompression::Av1,
-                strip: true,
+                keep: ForeignKeep::None,
                 ..HeifsaveBufferOptions::default()
             },
         ),
@@ -381,7 +380,7 @@ fn take_vips_error_buffer() -> String {
 
 /// The only code in the crate allowed to use `unsafe` (the crate roots are
 /// `#![deny(unsafe_code)]`): raw libvips and libc calls with no safe
-/// wrapper in the pinned `libvips = "=1.6.1"` bindings. Keep this module
+/// wrapper in the pinned `libvips = "=2.3.0"` bindings. Keep this module
 /// minimal and keep `unsafe` out of call sites; everything else must go
 /// through `VipsApp`'s safe methods.
 #[allow(unsafe_code)]

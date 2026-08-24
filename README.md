@@ -187,12 +187,14 @@ if you want missing keys to become cacheable 404s.
 ### Local (Linux)
 
 ```bash
-# Debian/Ubuntu build dependencies
+# Debian/Ubuntu build dependencies (libvips 8.17+ required; Ubuntu 26.04+)
 sudo apt-get install libvips-dev libheif-plugin-aomenc pkg-config
 cargo run -- config.local.toml
 ```
 
-Ubuntu splits libheif encoders into plugin packages; without
+The pinned libvips bindings (`=2.3.0`) pass argument names introduced in
+libvips 8.17, so older distribution packages (e.g. Ubuntu 24.04's libvips
+8.15) fail at runtime. Ubuntu splits libheif encoders into plugin packages; without
 `libheif-plugin-aomenc`, AVIF encoding is unavailable and the service will
 refuse to start when `[formats.avif]` is enabled (it verifies every enabled
 encoder at startup).

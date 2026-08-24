@@ -1,10 +1,10 @@
-# Build and runtime are both Ubuntu 24.04 (noble): its libvips 8.15 matches
-# the pinned libvips Rust bindings (=1.6.1) and its libheif ships the aom
-# AV1 encoder plugin needed for AVIF output. The service verifies every
-# enabled encoder at startup, so an image missing an encoder fails fast
-# instead of serving partial formats.
+# Build and runtime are both Ubuntu 26.04 (resolute): its libvips 8.18
+# matches the pinned libvips Rust bindings (=2.3.0, generated from 8.18)
+# and its libheif ships the aom AV1 encoder plugin needed for AVIF output.
+# The service verifies every enabled encoder at startup, so an image
+# missing an encoder fails fast instead of serving partial formats.
 
-FROM ubuntu:24.04 AS build
+FROM ubuntu:26.04 AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
@@ -40,7 +40,7 @@ COPY src ./src
 # ship the stub binary.
 RUN touch src/lib.rs src/main.rs && cargo build --release --locked
 
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \

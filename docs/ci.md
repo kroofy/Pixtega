@@ -23,8 +23,8 @@ Runs on every pull request and every push to `main`. Two jobs:
   re-caches. Run locally without any env vars — the script then builds
   the image itself.
 
-Both jobs run on `ubuntu-24.04` pinned (not `ubuntu-latest`): noble's
-libvips 8.15 matches the pinned `libvips = "=1.6.1"` bindings and its
+Both jobs run on `ubuntu-26.04` pinned (not `ubuntu-latest`): resolute's
+libvips 8.18 matches the pinned `libvips = "=2.3.0"` bindings and its
 libheif ships the aom AV1 encoder plugin needed for AVIF — the same
 reasoning as the Dockerfile base image.
 
@@ -84,8 +84,8 @@ The workflow then:
    - [Dockerfile](../Dockerfile) → `X.Y.Z`, `X.Y`, `latest`
    - [Dockerfile.lambda](../Dockerfile.lambda) → `X.Y.Z-lambda`, `lambda`
 2. Builds the release binary
-   (`pixtega-vX.Y.Z-x86_64-unknown-linux-gnu-ubuntu24.04.tar.gz`) with a
-   `SHA256SUMS` file. The binary is dynamically linked against Ubuntu 24.04
+   (`pixtega-vX.Y.Z-x86_64-unknown-linux-gnu-ubuntu26.04.tar.gz`) with a
+   `SHA256SUMS` file. The binary is dynamically linked against Ubuntu 26.04
    libvips (`libvips42t64` + `libheif-plugin-aomenc` at runtime); the
    container image is the recommended distribution.
 3. Creates a GitHub Release with auto-generated notes (the repo keeps no

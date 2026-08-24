@@ -18,7 +18,7 @@
 #
 # See deploy/lambda/README.md for the full deployment walkthrough.
 
-FROM ubuntu:24.04 AS build
+FROM ubuntu:26.04 AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
@@ -43,7 +43,7 @@ RUN rustup show active-toolchain || rustup toolchain install
 COPY src ./src
 RUN cargo build --release --locked
 
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.0.1 \
     /lambda-adapter /opt/extensions/lambda-adapter
