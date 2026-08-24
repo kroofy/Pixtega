@@ -9,6 +9,9 @@ which re-exports this package unchanged.
 npm install pixtega
 ```
 
+The package is TypeScript source. Node 22.6+ strips types on import;
+bundlers compile it as usual.
+
 ```js
 import { pixtegaUrl, pixtegaSrcSet, pixtegaPicture } from "pixtega";
 
