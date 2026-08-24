@@ -36,3 +36,4 @@ mount = "http"
 key_prefix = ""
 transport = "http"
 base_url = "http://127.0.0.1:8091"
+allow_private_destinations = true
