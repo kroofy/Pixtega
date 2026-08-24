@@ -8,7 +8,10 @@ within it.
 
 ## Building
 
-The service links against libvips, so install the native dependencies first:
+The service links against libvips, so install the native dependencies first.
+libvips 8.17 or newer is required (the pinned `libvips = "=2.3.0"` bindings
+pass argument names introduced in 8.17), so use Ubuntu 26.04+ or build
+libvips from source on older distributions:
 
 ```bash
 # Debian/Ubuntu

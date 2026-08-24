@@ -6,7 +6,7 @@
 #   1. builds and pushes OCI images to ghcr.io/kroofy/pixtega
 #        - Dockerfile        -> X.Y.Z, X.Y, latest
 #        - Dockerfile.lambda -> X.Y.Z-lambda, lambda
-#   2. builds the release binary (dynamically linked against Ubuntu 24.04
+#   2. builds the release binary (dynamically linked against Ubuntu 26.04
 #      libvips; the container image is the recommended distribution),
 #      packages it as a tarball with SHA256SUMS,
 #   3. creates a GitHub Release with auto-generated notes (no CHANGELOG in
@@ -41,7 +41,7 @@ env:
 jobs:
   binary:
     name: release binary + checksums
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -68,7 +68,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME}"
           if [ "${GITHUB_EVENT_NAME}" != "push" ]; then VERSION="rehearsal"; fi
-          NAME="pixtega-${VERSION}-x86_64-unknown-linux-gnu-ubuntu24.04"
+          NAME="pixtega-${VERSION}-x86_64-unknown-linux-gnu-ubuntu26.04"
           mkdir -p "dist/${NAME}"
           cp target/release/pixtega LICENSE README.md THIRD_PARTY_NOTICES.md \
             config.example.toml "dist/${NAME}/"
@@ -87,7 +87,7 @@ jobs:
 
   image:
     name: OCI images to GHCR
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -151,7 +151,7 @@ jobs:
     name: GitHub Release
     needs: [binary, image]
     if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: write
@@ -176,7 +176,7 @@ jobs:
             - `ghcr.io/kroofy/pixtega:${{ env.VERSION }}` (also `latest`)
             - `ghcr.io/kroofy/pixtega:${{ env.VERSION }}-lambda` (also `lambda`) — AWS Lambda Web Adapter baked in
 
-            The attached binary is dynamically linked against Ubuntu 24.04
+            The attached binary is dynamically linked against Ubuntu 26.04
             libvips (`libvips42t64` + `libheif-plugin-aomenc`); the container
             image is the recommended distribution. Verify downloads with
             `sha256sum -c SHA256SUMS`.

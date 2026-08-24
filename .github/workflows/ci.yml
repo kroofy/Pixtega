@@ -12,8 +12,8 @@
 # Mutation testing is intentionally NOT here: a full cargo-mutants run takes
 # hours and lives in .github/workflows/mutants.yml (cron + manual dispatch).
 #
-# ubuntu-24.04 is pinned (not ubuntu-latest) because its libvips 8.15
-# matches the pinned libvips Rust bindings (=1.6.1) and its libheif ships
+# ubuntu-26.04 is pinned (not ubuntu-latest) because its libvips 8.18
+# matches the pinned libvips Rust bindings (=2.3.0) and its libheif ships
 # the aom AV1 encoder plugin needed for AVIF output — the same reasoning as
 # the Dockerfile base image.
 
@@ -34,7 +34,7 @@ concurrency:
 jobs:
   check:
     name: fmt + clippy + tests
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -69,7 +69,7 @@ jobs:
 
   container:
     name: container acceptance
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
