@@ -70,11 +70,6 @@ are cut with `git tag vX.Y.Z && git push origin vX.Y.Z`; see
   code actually does — do not document aspirational features.
 - Keep commits focused; one logical change per commit.
 
-## Repository notes
-
-- The project name is Pixtega; the Rust crate and binary are named
-  `pixtega`.
-
 ## License
 
 By contributing, you agree that your contributions are licensed under the
