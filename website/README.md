@@ -11,6 +11,10 @@ No build step. Edit the HTML files in `public/` directly. Content must stay
 grounded in the root [README](../README.md) and the actual code; do not
 document behavior the service does not have.
 
+`public/llms.txt` (curated [llmstxt.org](https://llmstxt.org) index) and
+`public/llms-full.txt` (all docs as one Markdown file) are served at
+/llms.txt and /llms-full.txt; keep them in sync when the HTML docs change.
+
 ## Deploy
 
 Merges to `main` that touch `website/**` (or `.github/workflows/website.yml`)
