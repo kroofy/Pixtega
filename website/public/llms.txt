@@ -1,0 +1,34 @@
+# Pixtega
+
+> On-demand image derivation service, written in Rust. It fetches an image from an operator-configured source (HTTP(S), filesystem, or S3), derives a bounded variant (width, format, optional quality), and returns cacheable image bytes. One Rust binary or a Lambda container image; TOML config; MIT licensed.
+
+The entire HTTP API is one GET endpoint:
+`GET {base}{pathPrefix}/{mount}/{source-path}/w{width}[,q{quality}].{format}[?v=token]`.
+The default `pathPrefix` is `/images`. `format` is one of `webp`, `avif`, `jpeg` (no aliases). `{mount}` selects an operator-configured source — callers never pass a hostname, bucket, or directory. Width and quality must be in server-configured allowlists; omitting `q` uses the format's default, and spelling out the default is rejected so each derived image has exactly one URL. `v` is an opaque cache-busting token only; it is never sent upstream. The service never upscales.
+
+The JavaScript client is pure URL builders for this contract: `pixtegaUrl`, `pixtegaSrcSet`, `pixtegaPicture`. It builds strings and never fetches.
+
+Full documentation as one Markdown file: https://pixtega.com/llms-full.txt
+
+## Docs
+
+- [Home](https://pixtega.com/): what Pixtega is and why — one original, allowlisted sizes, CDN-friendly caching
+- [Getting started](https://pixtega.com/docs/getting-started.html): quick start with bundled fixtures, build dependencies (libvips), Docker
+- [Configuration](https://pixtega.com/docs/configuration.html): TOML schema, config precedence, limits and ranges, source transports, S3 credentials
+- [API reference](https://pixtega.com/docs/api.html): URL grammar, caching table, error taxonomy, response headers, observability
+- [AWS Lambda](https://pixtega.com/docs/aws-lambda.html): Lambda container image with the Web Adapter, deployment outline, production exposure
+
+## Code and packages
+
+- [GitHub repository](https://github.com/kroofy/Pixtega): source, issues, releases
+- [README](https://github.com/kroofy/Pixtega/blob/main/README.md): the reference for service behavior and operation
+- [pixtega on crates.io](https://crates.io/crates/pixtega): the Rust crate and binary
+- [pixtega on npm](https://www.npmjs.com/package/pixtega): JavaScript URL builders for the service's URL contract
+- [@pixtega/url on npm](https://www.npmjs.com/package/@pixtega/url): thin re-export of the `pixtega` npm package, same API
+
+## Optional
+
+- [deploy/lambda/README.md](https://github.com/kroofy/Pixtega/blob/main/deploy/lambda/README.md): step-by-step AWS Lambda walkthrough (ECR, IAM, Function URL, smoke test)
+- [config.example.toml](https://github.com/kroofy/Pixtega/blob/main/config.example.toml): full annotated configuration shape
+- [SECURITY.md](https://github.com/kroofy/Pixtega/blob/main/SECURITY.md): security policy
+- [CONTRIBUTING.md](https://github.com/kroofy/Pixtega/blob/main/CONTRIBUTING.md): build setup and PR expectations

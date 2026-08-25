@@ -1,0 +1,550 @@
+# Pixtega
+
+Pixtega is an on-demand image derivation service, written in Rust. It fetches
+an image from an operator-configured source (HTTP(S), filesystem, or S3),
+derives a bounded variant (width, format, optional quality), and returns
+cacheable image bytes. The Rust crate and binary are also named `pixtega`.
+MIT licensed.
+
+This file is the full public documentation of https://pixtega.com as one
+Markdown document, for agents and LLMs. A short curated index is at
+https://pixtega.com/llms.txt. The canonical sources are the HTML pages under
+https://pixtega.com and the repository README at
+https://github.com/kroofy/Pixtega/blob/main/README.md.
+
+---
+
+Source: https://pixtega.com/ and https://github.com/kroofy/Pixtega/blob/main/README.md
+
+## Overview
+
+Pixtega resizes and re-encodes images when they're requested. WebP, AVIF,
+JPEG. It returns bytes a CDN can cache hard. Keep the original. Pixtega
+builds the sizes you allow. No asset-pipeline ritual.
+
+### One URL per image
+
+Anatomy of a Pixtega URL:
+
+```text
+GET /images            <- prefix (path_prefix, default "/images")
+    /public            <- mount
+    /photos/example.jpg <- source path
+    /w1280.webp        <- transform: width + format
+    ?v=7d91c2          <- optional version token
+```
+
+The mount (`public`) picks a configured source. The path names the original.
+The last segment is the size and format: `w{width}[,q{quality}].{format}`.
+Widths and qualities come from allowlists. An optional `v` query param is for
+cache busting when the original changes.
+
+### What a URL gives you
+
+Store one original. Every variant is the same URL with a different final
+segment — and only allowlisted widths and qualities exist. For one stored
+original `photos/example.jpg` (4000×3000), with the values from
+`config.example.toml` (widths `[320, 640, 1280, 1920]`, per-format quality
+allowlists):
+
+- `/w1280.webp` → 1280×960 WebP, quality 82 (the WebP default)
+- `/w640.avif` → 640×480 AVIF, quality 55 (the AVIF default)
+- `/w320,q70.jpeg` → 320×240 JPEG, quality 70 (from the allowlist)
+- `/w2000.webp` → 400 Bad Request (2000 is not an allowed width)
+
+Successes are CDN-cacheable; errors are `no-store`.
+
+### Why Pixtega
+
+- **Keep the original.** You store one file. When a size is requested,
+  Pixtega builds it. No export script. No folder of thumbnails to keep in
+  sync.
+- **You allow the sizes.** Widths, formats, and qualities are allowlists in
+  the config. A caller cannot invent a 10,000px request. The service never
+  upscales.
+- **One URL per image.** Same original, same size, same format: same path.
+  Put it on a page and leave it.
+- **Built to sit behind a CDN.** Successes come back with Cache-Control a
+  CDN can honor. Errors are no-store, so a failed request does not poison
+  the cache.
+- **Sources stay behind mount names.** HTTP, the filesystem, or S3. Callers
+  see a mount name. Never a hostname, a bucket, or a directory.
+- **Honest errors. Quiet logs.** Permission denied is a 502, not a cacheable
+  404. One structured JSON line per request. Credentials stay out of the
+  log.
+- **Small to run.** One Rust binary or a Lambda image. TOML config. Encoders
+  are checked at startup, so a missing format fails the deploy instead of
+  the request.
+
+### Output formats
+
+WebP, AVIF, and JPEG, each with its own default quality and quality
+allowlist. Encoding uses libvips. Every enabled encoder is checked at
+startup. A deploy missing an encoder fails then, not when the first request
+asks for that format.
+
+---
+
+Source: https://pixtega.com/docs/getting-started.html
+
+## Getting started
+
+Pixtega ships as a single Rust binary named `pixtega`. Run it locally with
+cargo or in a container — the repository bundles fixture images so the quick
+start needs no network access.
+
+### Quick start (bundled fixtures, no network)
+
+```bash
+git clone https://github.com/kroofy/Pixtega.git
+cd Pixtega
+cargo run -- config.local.toml
+# in another shell:
+curl -o out.webp 'http://127.0.0.1:8080/images/fixtures/photos/example.jpg/w640.webp'
+```
+
+`config.local.toml` serves the bundled `fixtures/` directory through a
+filesystem source mounted at `fixtures`. The response is a 640-pixel-wide
+WebP derived from the bundled JPEG.
+
+### Build dependencies
+
+The service encodes with libvips, so building from source needs the libvips
+development headers.
+
+#### Linux (Debian/Ubuntu)
+
+```bash
+sudo apt-get install libvips-dev libheif-plugin-aomenc pkg-config
+cargo run -- config.local.toml
+```
+
+Ubuntu splits libheif encoders into plugin packages. Without
+`libheif-plugin-aomenc`, AVIF encoding is unavailable and the service
+refuses to start when `[formats.avif]` is enabled — it verifies every
+enabled encoder at startup.
+
+The pinned libvips bindings (`=2.3.0`) pass argument names introduced in
+libvips 8.17, so older distribution packages (e.g. Ubuntu 24.04's libvips
+8.15) fail at runtime; libvips 8.17+ is required (Ubuntu 26.04+).
+
+#### macOS
+
+```bash
+brew install vips pkg-config
+cargo run -- config.local.toml
+```
+
+Homebrew's `vips` includes AVIF support via libheif.
+
+### Docker
+
+```bash
+docker build -t pixtega .
+docker run --rm -p 8080:8080 pixtega            # serves config.example.toml
+docker run --rm -p 8080:8080 \
+  -v "$PWD/myconfig.toml:/config/config.toml:ro" \
+  pixtega /config/config.toml
+```
+
+The image's default command serves `config.example.toml`, which listens on
+`0.0.0.0:8080` and includes the bundled fixtures mount. Pass your own TOML
+path as the container command to replace it.
+
+### Next steps
+
+- Configuration (https://pixtega.com/docs/configuration.html) — the full
+  TOML schema, precedence, and validation rules.
+- API reference (https://pixtega.com/docs/api.html) — URL grammar, caching,
+  and the error taxonomy.
+- Deploy on AWS Lambda (https://pixtega.com/docs/aws-lambda.html) — the
+  recommended serverless deployment path.
+
+---
+
+Source: https://pixtega.com/docs/configuration.html
+
+## Configuration
+
+Pixtega is configured with a single TOML document. The schema is closed: an
+unknown field stops startup, as does any invalid value. There are no silent
+defaults for limits — what you configure is what runs.
+
+### Where configuration comes from
+
+The service checks three places, in this order, and uses the first match:
+
+1. **CLI argument** — a TOML file path passed as the first argument:
+   `pixtega /path/to/config.toml`
+2. **`CONFIG_FILE`** — an environment variable holding a TOML file path.
+3. **`CONFIG`** — an environment variable holding the full TOML document
+   inline. Useful where mounting files is awkward, such as AWS Lambda.
+
+If none is provided, startup fails with
+`no configuration: pass a TOML path, or set CONFIG_FILE or CONFIG`.
+Relative paths inside a config file (filesystem roots, CA certificate
+files) resolve against the file's directory; with inline `CONFIG`, they
+resolve against the process working directory.
+
+### Annotated overview
+
+This mirrors `config.example.toml` from the repository
+(https://github.com/kroofy/Pixtega/blob/main/config.example.toml):
+
+```toml
+# Where to listen.
+listen_address = "0.0.0.0:8080"
+# URL prefix for the image contract; requests outside it are rejected.
+path_prefix = "/images"
+
+# The closed Width Allowlist. Callers may only request these widths.
+allowed_widths = [320, 640, 1280, 1920]
+
+# Source size cap (bytes), enforced on the advertised length and again
+# while streaming.
+max_download_bytes = 52428800
+# Decode-bomb guard, checked from header metadata before decoding.
+max_source_megapixels = 100
+# One timeout over the whole source exchange.
+download_timeout_ms = 10000
+# HTTP(S) redirect bound (same origin, same base path only).
+max_redirects = 3
+# Process-wide fetch+process permits.
+max_concurrent_derivations = 8
+# Cache lifetime of 200 responses without a `v` token.
+unversioned_success_ttl_seconds = 3600
+# Cache lifetime of 404 responses.
+not_found_ttl_seconds = 60
+
+# One block per enabled output format. `default_quality` is required.
+# An empty or absent `allowed_qualities` means callers cannot pass `q`
+# for that format at all.
+[formats.webp]
+default_quality = 82
+allowed_qualities = [60, 72, 90]
+
+[formats.avif]
+default_quality = 55
+allowed_qualities = [40, 65]
+
+[formats.jpeg]
+default_quality = 85
+allowed_qualities = [70, 92]
+
+# Each source maps a mount name to a backend. Callers can never supply
+# a hostname, bucket, directory, or transport — only the mount.
+[[sources]]
+mount = "public"          # [a-z][a-z0-9-]{0,31}, unique
+key_prefix = "media"      # omitted => defaults to the mount; "" => none
+transport = "http"        # or "filesystem" or "s3"
+base_url = "https://images.example.test"
+
+[[sources]]
+mount = "fixtures"
+key_prefix = ""
+transport = "filesystem"
+root = "./fixtures"       # resolved relative to the config file
+
+[[sources]]
+mount = "archive"
+key_prefix = "originals"
+transport = "s3"
+bucket = "example-image-bucket"
+region = "us-east-1"
+```
+
+### Limits and allowed ranges
+
+| Field | Range | Purpose |
+| --- | --- | --- |
+| `allowed_widths` | each in 1..=16384 | the closed Width Allowlist |
+| `max_download_bytes` | 1..=104857600 | source size cap, enforced on the advertised length and again while streaming |
+| `max_source_megapixels` | 1..=500 | decode-bomb guard, checked from header metadata before decoding |
+| `download_timeout_ms` | 1..=60000 | one timeout over the whole source exchange |
+| `max_redirects` | 0..=10 | HTTP(S) redirect bound (same origin, same base path only) |
+| `max_concurrent_derivations` | 1..=64 | process-wide fetch+process permits |
+| `unversioned_success_ttl_seconds` | 1..=86400 | cache lifetime without `v` |
+| `not_found_ttl_seconds` | 1..=3600 | cache lifetime of 404s |
+
+### Source transports
+
+#### http
+
+Requires `base_url` (http or https). An optional `ca_certificate_file`
+(PEM, HTTPS only, resolved relative to the config file) supports local
+fixture servers; hostname verification always stays on. Use HTTPS outside
+loopback and trusted private networks; plain http is intended for local
+fixtures and trusted internal hops only.
+
+Pin `base_url` to an origin you control. A destination policy is enforced
+at startup and again before every fetch (including each redirect hop):
+hosts that are loopback, link-local (where cloud instance-metadata
+endpoints live), RFC 1918 private, carrier-grade NAT, IPv6 unique-local,
+`localhost`, or reserved-internal names (`metadata`, `*.internal`) are
+rejected unless the source sets `allow_private_destinations = true` — a
+local-development opt-in for fixture servers. The policy checks the
+configured host literally and does not resolve DNS. The same policy applies
+to the s3 transport's `endpoint_url`.
+
+#### filesystem
+
+Requires `root`, resolved relative to the config file and canonicalized at
+startup. Symlinks below the root are always rejected.
+
+#### s3
+
+Requires `bucket` and `region`; optional `endpoint_url` and
+`force_path_style` support local S3-compatible servers.
+
+### S3 credentials and permissions
+
+Credentials are never read from TOML. The adapter uses the standard AWS SDK
+credential provider chain: environment variables
+(`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`), shared config/credentials
+files and profiles, and instance/task roles.
+
+The service needs `s3:GetObject` on the configured prefix. With `GetObject`
+permission alone, S3 answers a missing key with 403 instead of 404 unless
+the principal also has `s3:ListBucket`; without list permission every
+missing object is reported (correctly, per the error taxonomy) as 502
+source-unavailable rather than 404. Grant `s3:ListBucket` on the bucket if
+you want missing keys to become cacheable 404s.
+
+Every validation rule is enforced at startup with a specific error. When in
+doubt, the startup error messages and `config.example.toml` are
+authoritative.
+
+---
+
+Source: https://pixtega.com/docs/api.html
+
+## API reference
+
+The entire API is one GET endpoint. Everything else — method, path shape,
+transform, version token — is strictly validated, and every derived image
+has exactly one URL.
+
+### URL grammar
+
+```text
+GET /images/{mount}/{source-path}/{transform}[?v={source-version}]
+```
+
+Example:
+
+```text
+GET /images/public/photos/example.jpg/w1280.webp?v=7d91c2
+```
+
+- `{mount}` selects a configured source. Callers can never supply a
+  hostname, bucket, directory, or transport.
+- `{source-path}` is everything between the mount and the final segment. It
+  is opaque, decoded exactly once, and strictly validated: no traversal, no
+  encoded delimiters, canonical percent-encoding only.
+- `{transform}` is the final segment: `w{width}[,q{quality}].{format}` with
+  `format` one of `webp`, `avif`, `jpeg` (no aliases). Width must be in the
+  configured allowlist; quality must be in the selected format's allowlist.
+  Omitting `q` uses the format's default; spelling out the default is
+  rejected, so each derived image has exactly one URL.
+- `v` is an opaque version token (`[A-Za-z0-9._~-]{1,128}`) used only for
+  cache policy. The service never appends it to the upstream key. Callers
+  must change `v` whenever the source bytes change.
+- Only `GET` is supported (anything else is 405, with an `Allow: GET`
+  header). Request targets over 8192 bytes are rejected.
+
+The service never upscales: a source narrower than the requested width
+keeps its original dimensions.
+
+### Caching
+
+| Response | Cache-Control |
+| --- | --- |
+| 200 with `v` | `public, max-age=31536000, immutable` |
+| 200 without `v` | `public, max-age={unversioned_success_ttl_seconds}` |
+| 404 | `public, max-age={not_found_ttl_seconds}` |
+| every other error | `no-store` |
+
+Do not enable year-long immutable caching unless every caller changes `v`
+when source bytes change; the service cannot verify this for you.
+
+### Errors
+
+Errors are JSON: `{ "error": "message" }`.
+
+| Status | Meaning |
+| --- | --- |
+| 400 | invalid path, mount, query, transform, width, format, or quality |
+| 404 | the source answered authoritatively that the object is absent |
+| 405 | method other than GET |
+| 500 | flatten/encode failed after a valid source was accepted |
+| 502 | source answered without a usable object: permission denied, unexpected upstream status, oversized content, undecodable or unsupported image bytes |
+| 504 | fetching the source timed out |
+
+Permission denial is always 502, never 404, so a misconfigured bucket
+cannot be cached as "missing".
+
+### Response headers
+
+Successful responses carry the derived image's `Content-Type` and the
+`Cache-Control` policy above. Every response — success or error — also
+carries `X-Content-Type-Options: nosniff`,
+`Content-Security-Policy: default-src 'none'`, and
+`X-Frame-Options: DENY`.
+
+### Observability
+
+The service emits one structured JSON completion event per request on
+stdout, with status, a stable outcome from a closed set (`success`,
+`rejected_request`, `not_found`, `timeout`, `source_too_large`,
+`source_unavailable`, `undecodable_source`, `flatten_failed`,
+`encode_failed`), mount, output width/format, upstream status, byte counts,
+and elapsed milliseconds. Response bodies, credentials, and `v` values are
+never logged.
+
+Path validation and adapter behavior are covered further in the README
+(https://github.com/kroofy/Pixtega/blob/main/README.md) and pinned down by
+the project's test suite.
+
+---
+
+Source: https://pixtega.com/docs/aws-lambda.html
+
+## Deploy on AWS Lambda
+
+The recommended serverless path: a Lambda container image built from
+`Dockerfile.lambda`, fronted by a Function URL. The image is the standard
+container plus the AWS Lambda Web Adapter extension, which translates
+Lambda invocations into plain HTTP — the binary contains no Lambda-specific
+code and the same image runs on ECS, EC2, or locally.
+
+### How it fits together
+
+- **`Dockerfile.lambda`** adds the Lambda Web Adapter
+  (https://github.com/aws/aws-lambda-web-adapter) as a Lambda extension and
+  clears the default command, so configuration comes from the environment
+  instead of a baked-in file.
+- **Inline configuration.** The service reads its full TOML configuration
+  from the `CONFIG` environment variable when no file is given (see
+  Configuration above), so config changes are a Lambda environment update,
+  never an image rebuild. Keep `listen_address = "0.0.0.0:8080"` — the
+  adapter forwards to port 8080 by default.
+- **TCP readiness.** The image sets
+  `AWS_LWA_READINESS_CHECK_PROTOCOL=tcp` because the service has no HTTP
+  health endpoint (`GET /` is a 400 by design); the adapter waits for the
+  TCP socket instead of an HTTP 200.
+- **S3 sources use the execution role.** Credentials are never read from
+  TOML; grant the function's role `s3:GetObject` on the configured prefix
+  (and ideally `s3:ListBucket` so missing keys become cacheable 404s
+  instead of 502s).
+
+### Deployment outline
+
+```bash
+# 1. Build the Lambda image
+docker build -f Dockerfile.lambda --platform linux/amd64 -t pixtega-lambda .
+
+# 2. Push to ECR
+docker tag pixtega-lambda "$ECR_REPO:latest"
+docker push "$ECR_REPO:latest"
+
+# 3. Create the function with inline TOML configuration
+aws lambda create-function \
+  --function-name pixtega \
+  --package-type Image \
+  --code ImageUri="$ECR_REPO:latest" \
+  --role "$ROLE_ARN" \
+  --memory-size 1024 --timeout 30 \
+  --environment "Variables={CONFIG=$(cat deploy/lambda/example-config.toml)}"
+
+# 4. Expose a Function URL for a smoke test (dev only — see below)
+aws lambda create-function-url-config --function-name pixtega --auth-type NONE
+curl -o out.webp "${FUNCTION_URL}images/fixtures/photos/example.jpg/w640.webp"
+```
+
+The complete walkthrough — ECR login, IAM policies, permissions for the
+public URL, and the smoke test — lives in the repository at
+https://github.com/kroofy/Pixtega/blob/main/deploy/lambda/README.md, with a
+ready-made example-config.toml
+(https://github.com/kroofy/Pixtega/blob/main/deploy/lambda/example-config.toml).
+
+### Production exposure
+
+`--auth-type NONE` makes the Function URL publicly invokable by anyone,
+with no cache absorbing traffic and no auth layer — it is for the smoke
+test above only, not for an internet-facing production endpoint. For
+production, put CloudFront in front (the service's cache policy is designed
+for it), switch the Function URL to `--auth-type AWS_IAM` with a CloudFront
+Origin Access Control (OAC) for Lambda Function URLs so only the
+distribution can invoke the function, and remove the public `NONE` invoke
+permission. Details in
+https://github.com/kroofy/Pixtega/blob/main/deploy/lambda/README.md.
+
+### Caveats
+
+- **6 MB response limit.** Buffered Function URL responses are capped at
+  about 6 MB. Derived images are usually far smaller, but you can enable
+  response streaming (`--invoke-mode RESPONSE_STREAM` plus
+  `AWS_LWA_INVOKE_MODE=response_stream`) to raise the limit, or constrain
+  `allowed_widths` and `allowed_qualities` so oversized outputs cannot be
+  produced.
+- **Cold starts.** Each new execution environment loads libvips, validates
+  configuration, and verifies every enabled encoder, so the first request
+  is noticeably slower than warm ones. A CDN in front absorbs most of this
+  — the service's cache policy is designed for exactly that.
+- **Environment size.** Lambda caps the function environment at 4 KB total.
+  If your TOML does not fit in `CONFIG`, bake a config file into the image
+  and point `CONFIG_FILE` at it.
+
+Prefer a plain container platform? The standard `Dockerfile` image works
+unchanged on ECS, Fargate, or any Docker host — see Getting started above.
+
+---
+
+Source: https://github.com/kroofy/Pixtega/blob/main/README.md
+
+## Clients and packages
+
+- **Rust**: the crate and binary are named `pixtega`
+  (https://crates.io/crates/pixtega). Source:
+  https://github.com/kroofy/Pixtega.
+- **JavaScript**: pure URL builders (`pixtegaUrl`, `pixtegaSrcSet`,
+  `pixtegaPicture`) for this service's URL contract live in the
+  repository's `js/` directory, published to npm as `pixtega`
+  (https://www.npmjs.com/package/pixtega) and `@pixtega/url`
+  (https://www.npmjs.com/package/@pixtega/url) — the scoped package is a
+  thin re-export with the same API. Install with `npm install pixtega` or
+  `npm install @pixtega/url`.
+
+The client builds strings and never fetches. It rejects everything the
+server's fixed URL grammar rejects (segment encoding, transform shape, the
+`v` token alphabet), but it cannot know your server's configured width and
+quality allowlists. A URL this client accepts can still get a 400: a width
+or quality outside the allowlist, or an explicit quality equal to the
+format's default (omit `quality` to use the default).
+
+```js
+import { pixtegaUrl, pixtegaSrcSet, pixtegaPicture } from "pixtega";
+
+pixtegaUrl({
+  base: "https://images.example.com",
+  mount: "public",
+  path: "photos/example.jpg", // decoded; also accepts ["photos", "example.jpg"]
+  width: 1280,
+  format: "webp", // "webp" | "avif" | "jpeg"
+  quality: 85,    // optional; must be allowlisted and not the default
+  v: "7d91c2",    // optional version token for immutable caching
+  pathPrefix: "/images", // default
+});
+// => "https://images.example.com/images/public/photos/example.jpg/w1280,q85.webp?v=7d91c2"
+
+pixtegaSrcSet({ base, mount, path, format: "webp", widths: [640, 1280] });
+// => ".../w640.webp 640w, .../w1280.webp 1280w"
+
+pixtegaPicture({ base, mount, path, widths: [640, 1280], formats: ["avif", "webp", "jpeg"] });
+// => { sources: [{ type: "image/avif", srcset }, ...],
+//      img: { src: ".../w1280.jpeg" } }
+```
+
+`pixtegaPicture` lists `sources` in the order given (browsers pick the
+first supported type) and uses the last format for the fallback `img.src`,
+so put the most widely supported format last.
