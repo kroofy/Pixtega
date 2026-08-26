@@ -34,7 +34,7 @@ const MAX_CONFIGURABLE_WIDTH: u64 = 16384;
 /// be allowed for any format.
 const MAX_CONFIGURABLE_QUALITY: u64 = 100;
 
-/// Parse and validate one GET request target.
+/// Parse and validate one GET or HEAD request target.
 ///
 /// `raw_path` is the raw, still-percent-encoded URI path. `raw_query` is
 /// the raw query string without the leading `?`, when one exists.

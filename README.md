@@ -62,8 +62,10 @@ GET /images/public/photos/example.jpg/w1280.webp?v=7d91c2
   must change `v` whenever the source bytes change. The `version_token`
   configuration key can downgrade (`ignore`) or reject (`reject`) it — see
   Configuration below.
-- Only `GET` is supported (anything else is 405). Request targets over
-  8192 bytes are rejected.
+- `GET` and `HEAD` are supported; `HEAD` returns exactly the `GET`
+  response — same status and headers, including `Content-Length` — with
+  the body dropped. Anything else is 405 with `Allow: GET, HEAD`. Request
+  targets over 8192 bytes are rejected.
 
 The service never upscales: a source narrower than the requested width
 keeps its original dimensions.
@@ -91,7 +93,7 @@ Errors are JSON: `{ "error": "message" }`.
 | --- | --- |
 | 400 | invalid path, mount, query, transform, width, format, or quality |
 | 404 | the Source answered authoritatively that the object is absent |
-| 405 | method other than GET |
+| 405 | method other than GET or HEAD |
 | 500 | flatten/encode failed after a valid source was accepted |
 | 502 | Source answered without a usable object: permission denied, unexpected upstream status, oversized content, undecodable or unsupported image bytes |
 | 504 | fetching the Source timed out |

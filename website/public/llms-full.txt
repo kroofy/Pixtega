@@ -336,9 +336,9 @@ Source: https://pixtega.com/docs/api.html
 
 ## API reference
 
-The entire API is one GET endpoint. Everything else — method, path shape,
-transform, version token — is strictly validated, and every derived image
-has exactly one URL.
+The entire API is one endpoint, answering GET and HEAD. Everything else —
+method, path shape, transform, version token — is strictly validated, and
+every derived image has exactly one URL.
 
 ### URL grammar
 
@@ -366,8 +366,10 @@ GET /images/public/photos/example.jpg/w1280.webp?v=7d91c2
   cache policy. The service never appends it to the upstream key. Callers
   must change `v` whenever the source bytes change. The `version_token`
   configuration key can downgrade (`ignore`) or reject (`reject`) it.
-- Only `GET` is supported (anything else is 405, with an `Allow: GET`
-  header). Request targets over 8192 bytes are rejected.
+- `GET` and `HEAD` are supported; `HEAD` returns exactly the `GET`
+  response — same status and headers, including `Content-Length` — with
+  the body dropped. Anything else is 405, with an `Allow: GET, HEAD`
+  header. Request targets over 8192 bytes are rejected.
 
 The service never upscales: a source narrower than the requested width
 keeps its original dimensions.
