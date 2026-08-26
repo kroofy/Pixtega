@@ -249,15 +249,23 @@ export interface PixtegaPictureOptions
    * fallback `<img src>`, so put the most widely supported format last.
    */
   formats: NonEmptyArray<PixtegaFormat>;
-  /** Optional `sizes` attribute value, passed through to `img`. */
+  /**
+   * Optional `sizes` attribute value, passed through to every `sources`
+   * entry. The srcsets use `w` descriptors, so without `sizes` a browser
+   * assumes the image spans the full viewport (`100vw`) and over-selects.
+   */
   sizes?: string;
 }
 
 export interface PixtegaPicture {
   /** One entry per format, in the given order, for `<source>` elements. */
-  sources: { type: string; srcset: string }[];
-  /** Fallback `<img>`: largest width in the last (most compatible) format. */
-  img: { src: string; sizes?: string };
+  sources: { type: string; srcset: string; sizes?: string }[];
+  /**
+   * Fallback `<img>`: largest width in the last (most compatible) format.
+   * `src` only — `sizes` belongs on the `<source>` elements and would be
+   * inert here without a `srcset`.
+   */
+  img: { src: string };
 }
 
 /**
@@ -269,12 +277,10 @@ export function pixtegaPicture(options: PixtegaPictureOptions): PixtegaPicture {
   const sources = formats.map((format) => ({
     type: FORMAT_MIME[format],
     srcset: pixtegaSrcSet({ ...rest, format, widths }),
+    ...(sizes === undefined ? {} : { sizes }),
   }));
   const largestWidth = widths.reduce((a, b) => (b > a ? b : a));
   const fallbackFormat = formats[formats.length - 1] ?? formats[0];
   const src = pixtegaUrl({ ...rest, width: largestWidth, format: fallbackFormat });
-  return {
-    sources,
-    img: sizes === undefined ? { src } : { src, sizes },
-  };
+  return { sources, img: { src } };
 }

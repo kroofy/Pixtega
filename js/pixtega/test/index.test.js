@@ -106,38 +106,40 @@ test("srcset lists one entry per width in order", () => {
   );
 });
 
-test("picture emits one source per format and a largest-width fallback img", () => {
+test("picture puts sizes on every source and keeps the fallback img src-only", () => {
+  const sizes = "(max-width: 640px) 100vw, 640px";
   const picture = pixtegaPicture({
     base,
     mount: "public",
     path: "a.jpg",
     widths: [1280, 640],
     formats: ["avif", "webp", "jpeg"],
-    sizes: "(max-width: 640px) 100vw, 640px",
+    sizes,
   });
   assert.deepEqual(picture, {
     sources: [
       {
         type: "image/avif",
         srcset: `${base}/images/public/a.jpg/w1280.avif 1280w, ${base}/images/public/a.jpg/w640.avif 640w`,
+        sizes,
       },
       {
         type: "image/webp",
         srcset: `${base}/images/public/a.jpg/w1280.webp 1280w, ${base}/images/public/a.jpg/w640.webp 640w`,
+        sizes,
       },
       {
         type: "image/jpeg",
         srcset: `${base}/images/public/a.jpg/w1280.jpeg 1280w, ${base}/images/public/a.jpg/w640.jpeg 640w`,
+        sizes,
       },
     ],
-    img: {
-      src: `${base}/images/public/a.jpg/w1280.jpeg`,
-      sizes: "(max-width: 640px) 100vw, 640px",
-    },
+    // src only: sizes without srcset would be inert on the img.
+    img: { src: `${base}/images/public/a.jpg/w1280.jpeg` },
   });
 });
 
-test("picture without sizes omits the sizes key", () => {
+test("picture without sizes omits the sizes key everywhere", () => {
   const picture = pixtegaPicture({
     base,
     mount: "public",
@@ -145,5 +147,10 @@ test("picture without sizes omits the sizes key", () => {
     widths: [640],
     formats: ["webp"],
   });
-  assert.deepEqual(picture.img, { src: `${base}/images/public/a.jpg/w640.webp` });
+  assert.deepEqual(picture, {
+    sources: [
+      { type: "image/webp", srcset: `${base}/images/public/a.jpg/w640.webp 640w` },
+    ],
+    img: { src: `${base}/images/public/a.jpg/w640.webp` },
+  });
 });
