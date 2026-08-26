@@ -3,27 +3,36 @@
 #   git tag vX.Y.Z && git push origin vX.Y.Z
 #
 # On a v* tag this workflow:
-#   1. builds and pushes OCI images to ghcr.io/kroofy/pixtega
+#   1. builds and pushes multi-arch (linux/amd64 + linux/arm64) OCI images
+#      to ghcr.io/kroofy/pixtega
 #        - Dockerfile        -> X.Y.Z, X.Y, latest
 #        - Dockerfile.lambda -> X.Y.Z-lambda, lambda
-#   2. builds the release binary (dynamically linked against Ubuntu 26.04
-#      libvips; the container image is the recommended distribution),
-#      packages it as a tarball with SHA256SUMS,
-#   3. creates a GitHub Release with auto-generated notes (no CHANGELOG in
+#      Each architecture builds natively on its own runner (no QEMU for
+#      the Rust + libvips compile); the per-arch digests are then joined
+#      into one manifest list per tag with `docker buildx imagetools create`.
+#   2. builds the release binary (x86_64 only; dynamically linked against
+#      Ubuntu 26.04 libvips; the container image is the recommended
+#      distribution), packages it as a tarball with SHA256SUMS,
+#   3. publishes the npm packages from js/ — `pixtega` first, then its
+#      re-export `@pixtega/url` — via npm trusted publishing (OIDC, with
+#      provenance). The tag minus the leading v must equal both
+#      package.json versions, or the job fails before publishing.
+#   4. creates a GitHub Release with auto-generated notes (no CHANGELOG in
 #      this repo) and the tarball + checksums attached.
 #
-# workflow_dispatch is a rehearsal: it builds everything but pushes no
-# images and creates no release.
+# workflow_dispatch is a rehearsal: it builds the images and the binary
+# and dry-runs the npm publish, but pushes no images, publishes no
+# packages, and creates no release.
 #
-# Permissions and secrets: only the built-in GITHUB_TOKEN is used.
+# Permissions and secrets: only the built-in GITHUB_TOKEN and a
+# short-lived OIDC id-token are used.
 #   - packages: write  (push to GHCR; the package inherits repo visibility,
 #     so images on a private repo stay private)
 #   - contents: write  (create the GitHub Release)
+#   - id-token: write  (npm trusted publishing — no NPM_TOKEN secret; the
+#     trusted publisher for both packages must point at this workflow
+#     file on npmjs.com, otherwise the npm job fails closed)
 # No extra repository secrets are required.
-#
-# Images are linux/amd64 only: cross-building the Rust + libvips stack for
-# arm64 under QEMU multiplies build time for no current consumer. Revisit
-# with native arm64 runners if needed.
 
 name: Release
 
@@ -85,13 +94,26 @@ jobs:
             dist/SHA256SUMS
           if-no-files-found: error
 
+  # One native build per architecture — an arm64 leg under QEMU on an x86
+  # runner would multiply the Rust + libvips compile time. On a tag push
+  # each leg pushes by digest (no tags yet); the manifest job below stitches
+  # the digests into the tagged multi-arch manifest lists.
   image:
-    name: OCI images to GHCR
-    runs-on: ubuntu-26.04
+    name: image build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
       contents: read
       packages: write
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-26.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@v7
 
@@ -99,6 +121,84 @@ jobs:
 
       - name: Log in to GHCR
         if: github.event_name == 'push'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Tags are applied by the manifest job; these steps only supply the
+      # OCI labels baked into each per-arch image.
+      - name: Image metadata (service)
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+
+      - name: Image metadata (lambda)
+        id: meta-lambda
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+
+      - name: Build service image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'push' }}
+
+      - name: Build lambda image
+        id: build-lambda
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.lambda
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta-lambda.outputs.labels }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'push' }}
+
+      - name: Export image digests
+        if: github.event_name == 'push'
+        run: |
+          mkdir -p /tmp/digests/service /tmp/digests/lambda
+          d="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/service/${d#sha256:}"
+          d="${{ steps.build-lambda.outputs.digest }}"
+          touch "/tmp/digests/lambda/${d#sha256:}"
+
+      - name: Upload digests
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests/
+          if-no-files-found: error
+
+  manifest:
+    name: multi-arch manifest lists
+    needs: image
+    if: github.event_name == 'push'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          pattern: digests-*
+          path: /tmp/digests
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -114,7 +214,6 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=rehearsal,enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Image metadata (lambda)
         id: meta-lambda
@@ -124,32 +223,86 @@ jobs:
           flavor: latest=false
           tags: |
             type=semver,pattern={{version}},suffix=-lambda
-            type=raw,value=lambda,enable=${{ github.event_name == 'push' }}
-            type=raw,value=rehearsal-lambda,enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=lambda
 
-      - name: Build and push service image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: Dockerfile
-          platforms: linux/amd64
-          push: ${{ github.event_name == 'push' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+      - name: Push service manifest list
+        working-directory: /tmp/digests/service
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta.outputs.json }}') \
+            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
 
-      - name: Build and push lambda image
-        uses: docker/build-push-action@v7
+      - name: Push lambda manifest list
+        working-directory: /tmp/digests/lambda
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta-lambda.outputs.json }}') \
+            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
+
+      - name: Inspect manifest lists
+        run: |
+          docker buildx imagetools inspect "${IMAGE}:${GITHUB_REF_NAME#v}"
+          docker buildx imagetools inspect "${IMAGE}:${GITHUB_REF_NAME#v}-lambda"
+
+  npm:
+    name: npm packages
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: js
+    steps:
+      - uses: actions/checkout@v7
+
+      # No npm cache here on purpose: release builds should not trust a
+      # shared cache (the npm trusted-publishing docs say the same).
+      - uses: actions/setup-node@v4
         with:
-          context: .
-          file: Dockerfile.lambda
-          platforms: linux/amd64
-          push: ${{ github.event_name == 'push' }}
-          tags: ${{ steps.meta-lambda.outputs.tags }}
-          labels: ${{ steps.meta-lambda.outputs.labels }}
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      # Trusted publishing needs npm >= 11.5.1; Node 22 bundles npm 10.
+      - name: Update npm for trusted publishing
+        run: npm install -g npm@11
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Check tag matches package versions
+        if: github.event_name == 'push'
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          for PKG in pixtega url; do
+            PKG_VERSION="$(node -p "require('./${PKG}/package.json').version")"
+            if [ "${PKG_VERSION}" != "${TAG_VERSION}" ]; then
+              echo "js/${PKG} is ${PKG_VERSION} but the tag is v${TAG_VERSION}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Pack and dry-run publish (rehearsal)
+        if: github.event_name != 'push'
+        run: |
+          npm pack --workspace pixtega --workspace @pixtega/url
+          npm publish --workspace pixtega --workspace @pixtega/url \
+            --access public --dry-run
+
+      # @pixtega/url depends on pixtega, so publish order matters.
+      - name: Publish pixtega
+        if: github.event_name == 'push'
+        run: npm publish --workspace pixtega --access public --provenance
+
+      - name: Publish @pixtega/url
+        if: github.event_name == 'push'
+        run: npm publish --workspace @pixtega/url --access public --provenance
 
   release:
     name: GitHub Release
-    needs: [binary, image]
+    needs: [binary, manifest, npm]
     if: github.event_name == 'push'
     runs-on: ubuntu-26.04
     timeout-minutes: 15
@@ -171,15 +324,20 @@ jobs:
         with:
           generate_release_notes: true
           body: |
-            Container images (linux/amd64):
+            Container images (multi-arch: linux/amd64, linux/arm64):
 
             - `ghcr.io/kroofy/pixtega:${{ env.VERSION }}` (also `latest`)
             - `ghcr.io/kroofy/pixtega:${{ env.VERSION }}-lambda` (also `lambda`) — AWS Lambda Web Adapter baked in
 
-            The attached binary is dynamically linked against Ubuntu 26.04
-            libvips (`libvips42t64` + `libheif-plugin-aomenc`); the container
-            image is the recommended distribution. Verify downloads with
-            `sha256sum -c SHA256SUMS`.
+            npm packages (published from this tag):
+
+            - [`pixtega@${{ env.VERSION }}`](https://www.npmjs.com/package/pixtega)
+            - [`@pixtega/url@${{ env.VERSION }}`](https://www.npmjs.com/package/@pixtega/url)
+
+            The attached binary is x86_64-only, dynamically linked against
+            Ubuntu 26.04 libvips (`libvips42t64` + `libheif-plugin-aomenc`);
+            the container image is the recommended distribution. Verify
+            downloads with `sha256sum -c SHA256SUMS`.
           files: |
             dist/*.tar.gz
             dist/SHA256SUMS

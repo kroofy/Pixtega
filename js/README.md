@@ -7,6 +7,10 @@ on-demand image derivation service. Two packages, one implementation:
 - [`@pixtega/url`](url/) — a thin re-export of `pixtega`, so the scoped
   namespace resolves to the same API. Install whichever name you prefer.
 
+Both names are published to npm from each `v*` release tag of this
+repository (see [docs/ci.md](../docs/ci.md)), straight from the
+TypeScript source below — no separate build.
+
 ```bash
 npm install pixtega
 # or
