@@ -509,11 +509,11 @@ Source: https://github.com/kroofy/Pixtega/blob/main/README.md
   https://github.com/kroofy/Pixtega.
 - **JavaScript**: pure URL builders (`pixtegaUrl`, `pixtegaSrcSet`,
   `pixtegaPicture`) for this service's URL contract live in the
-  repository's `js/` directory, published to npm as `pixtega`
-  (https://www.npmjs.com/package/pixtega) and `@pixtega/url`
-  (https://www.npmjs.com/package/@pixtega/url) — the scoped package is a
-  thin re-export with the same API. Install with `npm install pixtega` or
-  `npm install @pixtega/url`.
+  repository's `js/` directory, published to npm from each release tag
+  as `pixtega` (https://www.npmjs.com/package/pixtega) and
+  `@pixtega/url` (https://www.npmjs.com/package/@pixtega/url) — the
+  scoped package is a thin re-export with the same API. Install with
+  `npm install pixtega` or `npm install @pixtega/url`.
 
 The client builds strings and never fetches. It rejects everything the
 server's fixed URL grammar rejects (segment encoding, transform shape, the

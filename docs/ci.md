@@ -1,8 +1,10 @@
 # CI, mutation score, and releases
 
 Four GitHub Actions workflows. CI, Mutants, and Release use only the
-built-in `GITHUB_TOKEN`. Website deploy also needs two repo secrets
-(`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`).
+built-in `GITHUB_TOKEN` (Release additionally mints a short-lived OIDC
+id-token for npm trusted publishing — still no stored secret). Website
+deploy also needs two repo secrets (`CLOUDFLARE_API_TOKEN`,
+`CLOUDFLARE_ACCOUNT_ID`).
 
 ## CI (`.github/workflows/ci.yml`)
 
@@ -79,27 +81,46 @@ git tag vX.Y.Z && git push origin vX.Y.Z
 
 The workflow then:
 
-1. Builds and pushes OCI images (linux/amd64) to
+1. Builds and pushes multi-arch OCI images (linux/amd64 + linux/arm64) to
    `ghcr.io/kroofy/pixtega`:
    - [Dockerfile](../Dockerfile) → `X.Y.Z`, `X.Y`, `latest`
    - [Dockerfile.lambda](../Dockerfile.lambda) → `X.Y.Z-lambda`, `lambda`
+
+   Each architecture builds natively on its own runner (`ubuntu-26.04`
+   and `ubuntu-26.04-arm`) — no QEMU emulation for the Rust + libvips
+   compile. The per-arch images are pushed by digest and joined into one
+   manifest list per tag with `docker buildx imagetools create`.
 2. Builds the release binary
    (`pixtega-vX.Y.Z-x86_64-unknown-linux-gnu-ubuntu26.04.tar.gz`) with a
-   `SHA256SUMS` file. The binary is dynamically linked against Ubuntu 26.04
-   libvips (`libvips42t64` + `libheif-plugin-aomenc` at runtime); the
-   container image is the recommended distribution.
-3. Creates a GitHub Release with auto-generated notes (the repo keeps no
+   `SHA256SUMS` file. The binary is x86_64-only and dynamically linked
+   against Ubuntu 26.04 libvips (`libvips42t64` + `libheif-plugin-aomenc`
+   at runtime); the container image is the recommended distribution.
+3. Publishes the npm packages from [js/](../js/) — `pixtega` first, then
+   its re-export `@pixtega/url` — straight from the TypeScript source in
+   the repository (`npm pack` of the workspaces; no dist build). The job
+   fails before publishing if the tag minus the leading `v` does not
+   equal both `package.json` versions, so npm versions and git tags stay
+   aligned. Authentication is npm
+   [trusted publishing](https://docs.npmjs.com/trusted-publishers/)
+   (OIDC, with provenance): no `NPM_TOKEN` secret exists, and the trusted
+   publisher for both packages must point at `release.yml` on npmjs.com —
+   until it does, the npm job fails closed.
+4. Creates a GitHub Release with auto-generated notes (the repo keeps no
    CHANGELOG; notes come from merged PRs/commits since the previous tag)
    and the tarball + checksums attached.
 
 Running the workflow manually (`workflow_dispatch`) is a rehearsal: it
-builds the images and the binary but pushes nothing and creates no release.
+builds the images and the binary and dry-runs the npm publish
+(`npm pack` + `npm publish --dry-run`), but pushes no images, publishes
+no packages, and creates no release.
 
 Permissions (declared per job in the workflow):
 
 - `packages: write` — push to GHCR. The GHCR package inherits repository
   visibility, so images on a private repo stay private.
 - `contents: write` — create the GitHub Release.
+- `id-token: write` — mint the short-lived OIDC token for npm trusted
+  publishing (npm-job only).
 
 Everything is MIT ([LICENSE](../LICENSE)); release artifacts bundle
 `LICENSE` and `THIRD_PARTY_NOTICES.md`.

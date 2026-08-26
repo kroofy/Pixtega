@@ -227,9 +227,10 @@ smoke test) is in [deploy/lambda/README.md](deploy/lambda/README.md).
 ## JavaScript client
 
 Pure URL builders (`pixtegaUrl`, `pixtegaSrcSet`, `pixtegaPicture`) for
-this service's URL contract live in [js/](js/), published to npm as
-[`pixtega`](https://www.npmjs.com/package/pixtega) and
-[`@pixtega/url`](https://www.npmjs.com/package/@pixtega/url) (same API):
+this service's URL contract live in [js/](js/), published to npm from
+each release tag as [`pixtega`](https://www.npmjs.com/package/pixtega)
+and [`@pixtega/url`](https://www.npmjs.com/package/@pixtega/url), a thin
+re-export with the same API:
 
 ```bash
 npm install pixtega     # or: npm install @pixtega/url

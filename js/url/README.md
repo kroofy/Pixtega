@@ -2,8 +2,8 @@
 
 URL builders for [Pixtega](https://github.com/kroofy/Pixtega), the
 on-demand image derivation service. This package re-exports
-[`pixtega`](https://www.npmjs.com/package/pixtega) unchanged; install
-whichever name you prefer.
+[`pixtega`](https://www.npmjs.com/package/pixtega) unchanged and is
+published from the same release tag; install whichever name you prefer.
 
 ```bash
 npm install @pixtega/url

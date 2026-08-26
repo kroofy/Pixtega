@@ -24,7 +24,7 @@ Full documentation as one Markdown file: https://pixtega.com/llms-full.txt
 - [README](https://github.com/kroofy/Pixtega/blob/main/README.md): the reference for service behavior and operation
 - [pixtega on crates.io](https://crates.io/crates/pixtega): the Rust crate and binary
 - [pixtega on npm](https://www.npmjs.com/package/pixtega): JavaScript URL builders for the service's URL contract
-- [@pixtega/url on npm](https://www.npmjs.com/package/@pixtega/url): thin re-export of the `pixtega` npm package, same API
+- [@pixtega/url on npm](https://www.npmjs.com/package/@pixtega/url): thin re-export of the `pixtega` npm package, same API, published from the same release tag
 
 ## Optional
 

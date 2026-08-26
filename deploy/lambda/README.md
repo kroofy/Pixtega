@@ -17,13 +17,22 @@ point that serves the bundled fixtures and shows an S3 source.
 ## Prerequisites
 
 - AWS CLI v2, authenticated with permissions for ECR, Lambda, and IAM
-- Docker (build for the architecture you will run: `linux/amd64` below;
-  use `--platform linux/arm64` and `--architectures arm64` consistently
-  if you prefer Graviton)
+- Docker (if building locally, build for the architecture you will run:
+  `linux/amd64` below; use `--platform linux/arm64` and
+  `--architectures arm64` consistently if you prefer Graviton)
 
-## 1. Build the image
+## 1. Build the image (or pull a released one)
 
-From the repository root:
+Released images on GHCR are multi-arch (`linux/amd64` and `linux/arm64`),
+so you can skip the build and mirror a tag into ECR instead — Graviton
+included:
+
+```bash
+docker pull ghcr.io/kroofy/pixtega:lambda   # or a pinned X.Y.Z-lambda tag
+docker tag ghcr.io/kroofy/pixtega:lambda pixtega-lambda
+```
+
+To build locally, from the repository root:
 
 ```bash
 docker build -f Dockerfile.lambda --platform linux/amd64 -t pixtega-lambda .
