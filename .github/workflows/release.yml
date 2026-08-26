@@ -16,7 +16,9 @@
 #   3. publishes the npm packages from js/ — `pixtega` first, then its
 #      re-export `@pixtega/url` — via npm trusted publishing (OIDC, with
 #      provenance). The tag minus the leading v must equal both
-#      package.json versions, or the job fails before publishing.
+#      package.json versions, or the job fails before publishing. A
+#      workspace whose exact version is already on the registry is
+#      skipped instead of republished.
 #   4. creates a GitHub Release with auto-generated notes (no CHANGELOG in
 #      this repo) and the tarball + checksums attached.
 #
@@ -292,13 +294,33 @@ jobs:
             --access public --dry-run
 
       # @pixtega/url depends on pixtega, so publish order matters.
+      #
+      # npm publish is not idempotent: republishing an existing version 403s.
+      # @pixtega/url@0.1.1 was published outside CI to create the package so
+      # a trusted publisher could be attached, so each publish first asks the
+      # registry whether this exact name@version already exists and skips if
+      # it does.
       - name: Publish pixtega
         if: github.event_name == 'push'
-        run: npm publish --workspace pixtega --access public --provenance
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$(npm view "pixtega@${VERSION}" version \
+                --registry=https://registry.npmjs.org 2>/dev/null)" = "${VERSION}" ]; then
+            echo "pixtega@${VERSION} is already on npm, skipping"
+          else
+            npm publish --workspace pixtega --access public --provenance
+          fi
 
       - name: Publish @pixtega/url
         if: github.event_name == 'push'
-        run: npm publish --workspace @pixtega/url --access public --provenance
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$(npm view "@pixtega/url@${VERSION}" version \
+                --registry=https://registry.npmjs.org 2>/dev/null)" = "${VERSION}" ]; then
+            echo "@pixtega/url@${VERSION} is already on npm, skipping"
+          else
+            npm publish --workspace @pixtega/url --access public --provenance
+          fi
 
   release:
     name: GitHub Release

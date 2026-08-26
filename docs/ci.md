@@ -100,7 +100,11 @@ The workflow then:
    the repository (`npm pack` of the workspaces; no dist build). The job
    fails before publishing if the tag minus the leading `v` does not
    equal both `package.json` versions, so npm versions and git tags stay
-   aligned. Authentication is npm
+   aligned. Before each publish the job asks
+   <https://registry.npmjs.org> whether that exact `name@version` already
+   exists; if so, that workspace is skipped (`npm publish` is not
+   idempotent — republishing 403s), so a partially published tag can be
+   re-run safely. Authentication is npm
    [trusted publishing](https://docs.npmjs.com/trusted-publishers/)
    (OIDC, with provenance): no `NPM_TOKEN` secret exists, and the trusted
    publisher for both packages must point at `release.yml` on npmjs.com —
