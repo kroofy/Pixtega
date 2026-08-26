@@ -10,8 +10,9 @@
 #   (opened/synchronize/reopened) touching the same paths, deploys the
 #   PR's website/ with `--env preview` (the env in wrangler.jsonc names
 #   the Worker and attaches custom domain preview.pixtega.com; prod
-#   top-level config untouched), and keeps a sticky PR comment leading
-#   with https://preview.pixtega.com (workers.dev URL as secondary).
+#   top-level config untouched), and keeps a sticky PR comment pointing
+#   at https://preview.pixtega.com (the only preview URL; the preview
+#   env has workers_dev disabled).
 #   Because the Worker is shared, the most recent deploy from ANY PR is
 #   what is live: last deploy wins. The comment records PR number +
 #   short SHA so it's clear which revision was deployed. Skipped for
@@ -94,36 +95,24 @@ jobs:
           node-version: lts/*
 
       - name: wrangler deploy to shared preview Worker
-        id: deploy
         working-directory: website
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        # The primary preview URL is the fixed custom domain
-        # preview.pixtega.com (attached by the env in wrangler.jsonc).
-        # Also capture the workers.dev URL wrangler prints as a
-        # secondary link; empty output if the print format ever changes
-        # (the comment step then just omits it — no failing the job
-        # after a good deploy).
-        run: |
-          set -o pipefail
-          npx --yes wrangler@4 deploy --env preview | tee deploy-output.txt
-          url=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy-output.txt | head -n 1 || true)
-          echo "workers_dev_url=$url" >> "$GITHUB_OUTPUT"
+        # The preview URL is the fixed custom domain preview.pixtega.com
+        # (attached by the env in wrangler.jsonc, which also disables
+        # workers.dev for the preview env).
+        run: npx --yes wrangler@4 deploy --env preview
 
       - name: sticky PR comment with preview URL
         uses: actions/github-script@v9
-        env:
-          WORKERS_DEV_URL: ${{ steps.deploy.outputs.workers_dev_url }}
         with:
           script: |
             const marker = '<!-- pixtega-preview -->';
             const sha = context.payload.pull_request.head.sha.slice(0, 7);
-            const workersDev = process.env.WORKERS_DEV_URL;
             const body = [
               marker,
               `**Docs preview** for PR #${context.issue.number} at \`${sha}\`: https://preview.pixtega.com`,
-              ...(workersDev ? ['', `Also on workers.dev: ${workersDev}`] : []),
               '',
               'Shared preview Worker `pixtega-preview` — the most recent preview',
               'deploy from any PR is what is live (last deploy wins).',

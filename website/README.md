@@ -40,9 +40,10 @@ shared preview Worker**, `pixtega-preview`, at
 (`custom_domain: true` creates/updates the DNS record in the pixtega.com
 zone on deploy). Prod uses the top-level config, so it is never touched.
 The workflow posts a sticky PR comment (marker `<!-- pixtega-preview -->`)
-leading with <https://preview.pixtega.com> (the
-`pixtega-preview.<subdomain>.workers.dev` URL as a secondary link), plus
-the PR number and the short SHA that was deployed.
+with <https://preview.pixtega.com>, the PR number, and the short SHA that
+was deployed. The preview env sets `workers_dev: false`, so the preview
+Worker is not served on `*.workers.dev` — preview.pixtega.com is the only
+preview URL.
 
 One shared Worker, not one per PR: the Workers free tier has a limited
 number of Worker (script) slots, so previews all share a single slot.
