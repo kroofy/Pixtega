@@ -1,6 +1,6 @@
 {
   "name": "pixtega",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "URL builders for Pixtega, the on-demand image derivation service. Pure string helpers: pixtegaUrl, pixtegaSrcSet, pixtegaPicture.",
   "license": "MIT",
   "type": "module",

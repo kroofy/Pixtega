@@ -1,6 +1,6 @@
 {
   "name": "@pixtega/url",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "URL builders for Pixtega, the on-demand image derivation service. Re-exports the pixtega package: pixtegaUrl, pixtegaSrcSet, pixtegaPicture.",
   "license": "MIT",
   "type": "module",
@@ -42,7 +42,7 @@
     "url"
   ],
   "dependencies": {
-    "pixtega": "^0.1.0"
+    "pixtega": "^0.1.1"
   },
   "devDependencies": {
     "typescript": "^7.0.2"
