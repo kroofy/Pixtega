@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use pixtega::config::{load_from_file, load_from_str, AppConfig, SourceConfig};
+use pixtega::config::{load_from_file, load_from_str, AppConfig, SourceConfig, VersionTokenMode};
 use pixtega::errors::ConfigError;
 use pixtega::types::OutputFormat;
 
@@ -130,6 +130,7 @@ fn example_configuration_parses_via_load_from_file() {
     assert_eq!(config.listen_address.port(), 8080);
     assert_eq!(config.path_prefix, "/images");
     assert_eq!(config.allowed_widths, vec![320, 640, 1280, 1920]);
+    assert_eq!(config.version_token, VersionTokenMode::Accept);
     assert_eq!(config.sources.len(), 3);
 
     let webp = config.format_policy(OutputFormat::Webp).expect("webp");
@@ -285,6 +286,46 @@ fn out_of_range_limits_timeouts_and_ttls_are_rejected() {
 fn unknown_top_level_fields_are_rejected() {
     let toml = format!("bogus_setting = 1\n{}", valid_config());
     assert_rejected(&toml, "bogus_setting");
+}
+
+// ---------------------------------------------------------------------------
+// version_token: a closed enum defaulting to `accept`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn version_token_defaults_to_accept_when_omitted() {
+    let config = load(&valid_config()).expect("baseline configuration must parse");
+    assert_eq!(config.version_token, VersionTokenMode::Accept);
+}
+
+#[test]
+fn version_token_accepts_the_three_documented_modes() {
+    let cases = [
+        ("accept", VersionTokenMode::Accept),
+        ("ignore", VersionTokenMode::Ignore),
+        ("reject", VersionTokenMode::Reject),
+    ];
+    for (value, expected) in cases {
+        let toml = format!("version_token = \"{value}\"\n{}", valid_config());
+        let config =
+            load(&toml).unwrap_or_else(|e| panic!("version_token = {value:?} must parse: {e}"));
+        assert_eq!(config.version_token, expected, "value {value:?}");
+    }
+}
+
+#[test]
+fn unknown_version_token_values_are_rejected() {
+    for value in [
+        "\"Accept\"", // case-sensitive
+        "\"IGNORE\"",
+        "\"deny\"",
+        "\"\"",
+        "true", // wrong type
+        "1",
+    ] {
+        let toml = format!("version_token = {value}\n{}", valid_config());
+        assert_rejected(&toml, "version_token");
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -46,7 +46,7 @@ impl Outcome {
 
 /// A request that fails validation before any Source is contacted.
 /// Every variant maps to HTTP 400 (405 is handled by the HTTP layer for
-/// non-GET methods, before parsing).
+/// methods other than GET and HEAD, before parsing).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestError {
     /// Request target (path + query) longer than 8192 bytes.

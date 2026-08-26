@@ -8,7 +8,7 @@ use std::time::Instant;
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::response::Builder;
-use axum::http::{header, Method, StatusCode, Uri};
+use axum::http::{header, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
 use tokio::sync::Semaphore;
 
@@ -115,6 +115,11 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
     // must not be captured across await points.
     let (parts, _body) = request.into_parts();
     let (response, report) = respond(&state, &parts.method, &parts.uri).await;
+    let response = if parts.method == Method::HEAD {
+        drop_body(response).await
+    } else {
+        response
+    };
 
     let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let mut event = CompletionEvent::new(response.status().as_u16(), report.outcome, elapsed_ms);
@@ -130,7 +135,10 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
 }
 
 async fn respond(state: &AppState, method: &Method, uri: &Uri) -> (Response, Report) {
-    if method != Method::GET {
+    // HEAD takes exactly the GET path — same routing, derivation, status,
+    // and headers. The body is dropped at the end of `handle`, so the
+    // advertised Content-Length stays that of the equivalent GET response.
+    if method != Method::GET && method != Method::HEAD {
         let response = error_response(state, StatusCode::METHOD_NOT_ALLOWED, "method not allowed");
         return (response, Report::new(Outcome::RejectedRequest));
     }
@@ -217,6 +225,21 @@ async fn respond(state: &AppState, method: &Method, uri: &Uri) -> (Response, Rep
     (success_response(state, &resolved, derived), report)
 }
 
+/// Replace the response body with an empty one, advertising the dropped
+/// body's length through an explicit `Content-Length`. A HEAD response
+/// thus carries exactly the headers of the equivalent GET — including a
+/// truthful `Content-Length` — with no body on the wire.
+async fn drop_body(response: Response) -> Response {
+    let (mut parts, body) = response.into_parts();
+    let bytes = axum::body::to_bytes(body, usize::MAX)
+        .await
+        .expect("responses are built from in-memory bodies");
+    parts
+        .headers
+        .insert(header::CONTENT_LENGTH, HeaderValue::from(bytes.len()));
+    Response::from_parts(parts, Body::empty())
+}
+
 /// Every status produced by the error taxonomy is a valid HTTP status.
 fn taxonomy_status(status: u16) -> StatusCode {
     StatusCode::from_u16(status).expect("error taxonomy produces valid HTTP statuses")
@@ -262,7 +285,7 @@ fn error_response(state: &AppState, status: StatusCode, message: &str) -> Respon
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::CACHE_CONTROL, cache_control);
     if status == StatusCode::METHOD_NOT_ALLOWED {
-        builder = builder.header(header::ALLOW, "GET");
+        builder = builder.header(header::ALLOW, "GET, HEAD");
     }
     security_headers(builder)
         .body(Body::from(body))

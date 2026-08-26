@@ -8,7 +8,9 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use pixtega::config::{AppConfig, FilesystemSourceConfig, FormatPolicy, SourceConfig};
+use pixtega::config::{
+    AppConfig, FilesystemSourceConfig, FormatPolicy, SourceConfig, VersionTokenMode,
+};
 use pixtega::errors::RequestError;
 use pixtega::request::{parse_request, MAX_TARGET_BYTES};
 use pixtega::types::{OutputFormat, Transform};
@@ -43,6 +45,7 @@ fn config_with_formats(formats: BTreeMap<OutputFormat, FormatPolicy>) -> AppConf
         max_concurrent_derivations: 8,
         unversioned_success_ttl_seconds: 3600,
         not_found_ttl_seconds: 60,
+        version_token: VersionTokenMode::Accept,
         formats,
         sources: vec![
             // Key Prefix differs from the Mount.
@@ -398,6 +401,75 @@ fn repeated_v_and_unknown_query_parameters_are_rejected() {
             Some(query),
             RequestError::InvalidQuery,
         );
+    }
+}
+
+// --- `version_token` modes: `ignore` keeps the grammar but never marks a
+// --- request versioned; `reject` treats `v` like any unknown parameter.
+
+fn config_with_version_token(mode: VersionTokenMode) -> AppConfig {
+    let mut cfg = base_config();
+    cfg.version_token = mode;
+    cfg
+}
+
+#[test]
+fn ignore_mode_accepts_a_valid_v_but_never_marks_the_request_versioned() {
+    let cfg = config_with_version_token(VersionTokenMode::Ignore);
+    for v in ["7d91c2", "a", &"x".repeat(128)] {
+        let query = format!("v={v}");
+        let resolved = ok(&cfg, "/images/public/a.jpg/w640.webp", Some(&query));
+        assert!(!resolved.versioned, "query {query:?}");
+    }
+    // Everything except the versioned flag resolves exactly as in accept.
+    let accepted = ok(
+        &base_config(),
+        "/images/public/a.jpg/w640.webp",
+        Some("v=7d91c2"),
+    );
+    let ignored = ok(&cfg, "/images/public/a.jpg/w640.webp", Some("v=7d91c2"));
+    assert_eq!(accepted.mount, ignored.mount);
+    assert_eq!(accepted.upstream_key, ignored.upstream_key);
+    assert_eq!(accepted.transform, ignored.transform);
+}
+
+#[test]
+fn ignore_mode_still_enforces_the_v_grammar() {
+    let cfg = config_with_version_token(VersionTokenMode::Ignore);
+    let cases = [
+        ("v=".to_string(), RequestError::InvalidVersion),
+        ("v=%41".to_string(), RequestError::InvalidVersion),
+        (
+            format!("v={}", "x".repeat(129)),
+            RequestError::InvalidVersion,
+        ),
+        ("v=1&v=2".to_string(), RequestError::InvalidQuery),
+        ("foo=1".to_string(), RequestError::InvalidQuery),
+    ];
+    for (query, expected) in cases {
+        expect_err(
+            &cfg,
+            "/images/public/a.jpg/w640.webp",
+            Some(&query),
+            expected,
+        );
+    }
+}
+
+#[test]
+fn reject_mode_rejects_any_v_and_accepts_a_missing_one() {
+    let cfg = config_with_version_token(VersionTokenMode::Reject);
+    for query in ["v=7d91c2", "v=1", "v=", "v", "v=%41", "v=1&v=2"] {
+        expect_err(
+            &cfg,
+            "/images/public/a.jpg/w640.webp",
+            Some(query),
+            RequestError::InvalidQuery,
+        );
+    }
+    for query in [None, Some("")] {
+        let resolved = ok(&cfg, "/images/public/a.jpg/w640.webp", query);
+        assert!(!resolved.versioned, "query {query:?}");
     }
 }
 

@@ -21,6 +21,7 @@ use image::RgbImage;
 use pixtega::app::{build_router, AppState};
 use pixtega::config::{
     AppConfig, FilesystemSourceConfig, FormatPolicy, HttpSourceConfig, SourceConfig,
+    VersionTokenMode,
 };
 use pixtega::errors::ProcessError;
 use pixtega::processor::init_vips;
@@ -208,6 +209,7 @@ fn test_config(sources: Vec<SourceConfig>, download_timeout_ms: u64) -> AppConfi
         max_concurrent_derivations: 4,
         unversioned_success_ttl_seconds: UNVERSIONED_TTL,
         not_found_ttl_seconds: NOT_FOUND_TTL,
+        version_token: VersionTokenMode::Accept,
         formats,
         sources,
     }
@@ -249,9 +251,16 @@ async fn spawn_app(config: AppConfig) -> SocketAddr {
 /// A tempdir-backed filesystem Source with one real generated JPEG at
 /// `photo.jpg`, plus the app serving it.
 async fn spawn_filesystem_app() -> (tempfile::TempDir, SocketAddr) {
+    spawn_filesystem_app_with(VersionTokenMode::Accept).await
+}
+
+/// Same as [`spawn_filesystem_app`], with an explicit `version_token` mode.
+async fn spawn_filesystem_app_with(mode: VersionTokenMode) -> (tempfile::TempDir, SocketAddr) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("photo.jpg"), jpeg_fixture(800, 400)).unwrap();
-    let addr = spawn_app(test_config(vec![filesystem_source(dir.path())], 10_000)).await;
+    let mut config = test_config(vec![filesystem_source(dir.path())], 10_000);
+    config.version_token = mode;
+    let addr = spawn_app(config).await;
     (dir, addr)
 }
 
@@ -348,6 +357,56 @@ async fn unversioned_success_uses_the_short_ttl_and_is_never_immutable() {
     );
     assert_security_headers(&response);
     assert_eq!(&response.body[..4], b"RIFF", "WebP container signature");
+}
+
+// ---------------------------------------------------------------------------
+// version_token modes: `ignore` and `reject` (`accept` is asserted above)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn ignore_mode_serves_a_versioned_url_with_the_unversioned_policy() {
+    let (_dir, addr) = spawn_filesystem_app_with(VersionTokenMode::Ignore).await;
+    let response = send_request(addr, "GET", "/images/files/photo.jpg/w320.webp?v=abc-123").await;
+    assert_eq!(response.status, 200, "a well-formed v must not 400");
+    let cache_control = response.header("cache-control").expect("cache-control");
+    assert_eq!(cache_control, format!("public, max-age={UNVERSIONED_TTL}"));
+    assert!(
+        !cache_control.contains("immutable"),
+        "ignore mode must never upgrade to immutable, got {cache_control:?}"
+    );
+    assert!(!response.body.is_empty(), "derived image body");
+
+    // The grammar is unchanged: malformed queries are still 400.
+    for target in [
+        "/images/files/photo.jpg/w320.webp?v=%41",
+        "/images/files/photo.jpg/w320.webp?x=1",
+    ] {
+        let response = send_request(addr, "GET", target).await;
+        assert_eq!(response.status, 400, "target {target}");
+        assert_no_store(&response);
+    }
+}
+
+#[tokio::test]
+async fn reject_mode_rejects_any_v_and_still_serves_unversioned_urls() {
+    let (_dir, addr) = spawn_filesystem_app_with(VersionTokenMode::Reject).await;
+    for target in [
+        "/images/files/photo.jpg/w320.webp?v=abc-123",
+        "/images/files/photo.jpg/w320.webp?v=",
+    ] {
+        let response = send_request(addr, "GET", target).await;
+        assert_eq!(response.status, 400, "target {target}");
+        assert_no_store(&response);
+        assert_error_body(&response);
+        assert_security_headers(&response);
+    }
+
+    let response = send_request(addr, "GET", "/images/files/photo.jpg/w320.webp").await;
+    assert_eq!(response.status, 200, "a missing v is always fine");
+    assert_eq!(
+        response.header("cache-control"),
+        Some(format!("public, max-age={UNVERSIONED_TTL}").as_str())
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -487,23 +546,88 @@ async fn invalid_requests_are_non_cacheable_400_json_errors() {
 }
 
 #[tokio::test]
-async fn non_get_methods_are_non_cacheable_405_with_allow_get() {
+async fn non_get_head_methods_are_non_cacheable_405_with_allow_get_head() {
     let (_dir, addr) = spawn_filesystem_app().await;
-    // HEAD is an optional extension this implementation does not provide,
-    // so it must fall into the same 405 taxonomy as every non-GET method.
-    for method in ["POST", "PUT", "DELETE", "HEAD"] {
+    for method in ["POST", "PUT", "DELETE", "OPTIONS", "PATCH"] {
         let response = send_request(addr, method, "/images/files/photo.jpg/w320.webp").await;
         assert_eq!(response.status, 405, "method {method}");
-        assert_eq!(response.header("allow"), Some("GET"), "method {method}");
+        assert_eq!(
+            response.header("allow"),
+            Some("GET, HEAD"),
+            "method {method}"
+        );
         assert_no_store(&response);
-        if method == "HEAD" {
-            // A HEAD response must not carry a body (hyper strips it), so
-            // only the headers can be asserted.
-            assert_eq!(response.header("content-type"), Some("application/json"));
-            assert!(response.body.is_empty(), "HEAD response must have no body");
-        } else {
-            assert_error_body(&response);
+        assert_error_body(&response);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HEAD: exactly the GET response with the body dropped
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn head_on_a_valid_derived_url_matches_get_with_an_empty_body() {
+    let (_dir, addr) = spawn_filesystem_app().await;
+    for target in [
+        "/images/files/photo.jpg/w320.webp?v=abc-123", // versioned
+        "/images/files/photo.jpg/w320.webp",           // unversioned
+    ] {
+        let get = send_request(addr, "GET", target).await;
+        let head = send_request(addr, "HEAD", target).await;
+        assert_eq!(get.status, 200, "target {target}");
+        assert_eq!(head.status, 200, "target {target}");
+        for header in ["content-type", "cache-control"] {
+            assert_eq!(
+                head.header(header),
+                get.header(header),
+                "header {header}, target {target}"
+            );
         }
+        assert_security_headers(&head);
+        assert!(
+            head.body.is_empty(),
+            "HEAD response must have no body, target {target}"
+        );
+        // Content-Length stays truthful: it advertises the derived image
+        // the equivalent GET would return.
+        let advertised: usize = head
+            .header("content-length")
+            .expect("HEAD carries Content-Length")
+            .parse()
+            .expect("numeric Content-Length");
+        assert_eq!(advertised, get.body.len(), "target {target}");
+    }
+}
+
+#[tokio::test]
+async fn head_on_errors_matches_get_status_and_headers_with_an_empty_body() {
+    let (_dir, addr) = spawn_filesystem_app().await;
+    for (target, status) in [
+        ("/images/files/nope.jpg/w320.webp?v=1", 404), // absence
+        ("/images/files/photo.jpg/w123.webp", 400),    // disallowed width
+    ] {
+        let get = send_request(addr, "GET", target).await;
+        let head = send_request(addr, "HEAD", target).await;
+        assert_eq!(get.status, status, "target {target}");
+        assert_eq!(head.status, status, "target {target}");
+        for header in ["content-type", "cache-control"] {
+            assert_eq!(
+                head.header(header),
+                get.header(header),
+                "header {header}, target {target}"
+            );
+        }
+        assert_security_headers(&head);
+        assert!(
+            head.body.is_empty(),
+            "HEAD response must have no body, target {target}"
+        );
+        let advertised: usize = head
+            .header("content-length")
+            .expect("HEAD carries Content-Length")
+            .parse()
+            .expect("numeric Content-Length");
+        assert_eq!(advertised, get.body.len(), "target {target}");
     }
 }
 

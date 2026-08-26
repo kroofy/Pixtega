@@ -36,9 +36,9 @@
   <main>
     <h1>API reference</h1>
     <p class="lead">
-      The entire API is one GET endpoint. Everything else — method, path
-      shape, transform, version token — is strictly validated, and every
-      derived image has exactly one URL.
+      The entire API is one endpoint, answering GET and HEAD. Everything
+      else — method, path shape, transform, version token — is strictly
+      validated, and every derived image has exactly one URL.
     </p>
 
     <h2 id="url-grammar">URL grammar<a class="anchor" href="#url-grammar" aria-label="Link to this section">#</a></h2>
@@ -69,12 +69,18 @@
         <code>v</code> is an opaque version token
         (<code>[A-Za-z0-9._~-]{1,128}</code>) used only for cache policy. The
         service never appends it to the upstream key. Callers must change
-        <code>v</code> whenever the source bytes change.
+        <code>v</code> whenever the source bytes change. The
+        <a href="/docs/configuration.html"><code>version_token</code></a>
+        configuration key can downgrade (<code>ignore</code>) or reject
+        (<code>reject</code>) it.
       </li>
       <li>
-        Only <code>GET</code> is supported (anything else is 405, with an
-        <code>Allow: GET</code> header). Request targets over 8192 bytes are
-        rejected.
+        <code>GET</code> and <code>HEAD</code> are supported;
+        <code>HEAD</code> returns exactly the <code>GET</code> response —
+        same status and headers, including <code>Content-Length</code> —
+        with the body dropped. Anything else is 405, with an
+        <code>Allow: GET, HEAD</code> header. Request targets over 8192
+        bytes are rejected.
       </li>
     </ul>
     <p>
@@ -97,7 +103,10 @@
     <div class="callout">
       Do not enable year-long immutable caching unless every caller changes
       <code>v</code> when source bytes change; the service cannot verify this
-      for you.
+      for you. The table shows the default
+      <code>version_token = "accept"</code>: with <code>"ignore"</code> a 200
+      with <code>v</code> uses the unversioned policy instead, and with
+      <code>"reject"</code> any <code>v</code> is a 400.
     </div>
 
     <h2 id="errors">Errors<a class="anchor" href="#errors" aria-label="Link to this section">#</a></h2>
@@ -109,7 +118,7 @@
       <tbody>
         <tr><td>400</td><td>invalid path, mount, query, transform, width, format, or quality</td></tr>
         <tr><td>404</td><td>the source answered authoritatively that the object is absent</td></tr>
-        <tr><td>405</td><td>method other than GET</td></tr>
+        <tr><td>405</td><td>method other than GET or HEAD</td></tr>
         <tr><td>500</td><td>flatten/encode failed after a valid source was accepted</td></tr>
         <tr><td>502</td><td>source answered without a usable object: permission denied, unexpected upstream status, oversized content, undecodable or unsupported image bytes</td></tr>
         <tr><td>504</td><td>fetching the source timed out</td></tr>
