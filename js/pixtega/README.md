@@ -28,8 +28,14 @@ pixtegaUrl({
 pixtegaSrcSet({ base, mount, path, format: "webp", widths: [640, 1280] });
 // => ".../w640.webp 640w, .../w1280.webp 1280w"
 
-pixtegaPicture({ base, mount, path, widths: [640, 1280], formats: ["avif", "webp", "jpeg"] });
-// => { sources: [{ type, srcset }, ...], img: { src } }
+pixtegaPicture({
+  base, mount, path,
+  widths: [640, 1280],
+  formats: ["avif", "webp", "jpeg"],
+  sizes: "(max-width: 640px) 100vw, 640px",
+});
+// => { sources: [{ type, srcset, sizes }, ...], img: { src } }
+// `sizes` goes on each <source>; the fallback <img> is src-only.
 ```
 
 Options for `pixtegaUrl`:
