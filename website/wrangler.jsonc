@@ -8,8 +8,10 @@
 // (deploy with: npx wrangler deploy --env preview). Its custom domain
 // preview.pixtega.com IS managed here: `custom_domain: true` makes
 // wrangler create/update the DNS record in the pixtega.com zone on
-// deploy. `assets` is repeated in the env on purpose — explicit beats
-// relying on cross-environment inheritance rules.
+// deploy. `workers_dev: false` keeps the preview off *.workers.dev —
+// preview.pixtega.com is the only preview URL. `assets` is repeated in
+// the env on purpose — explicit beats relying on cross-environment
+// inheritance rules.
 {
   "name": "pixtega",
   "compatibility_date": "2026-08-22",
@@ -23,7 +25,7 @@
       "assets": {
         "directory": "./public"
       },
-      "workers_dev": true,
+      "workers_dev": false,
       "routes": [
         {
           "pattern": "preview.pixtega.com",
