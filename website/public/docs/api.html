@@ -69,7 +69,10 @@
         <code>v</code> is an opaque version token
         (<code>[A-Za-z0-9._~-]{1,128}</code>) used only for cache policy. The
         service never appends it to the upstream key. Callers must change
-        <code>v</code> whenever the source bytes change.
+        <code>v</code> whenever the source bytes change. The
+        <a href="/docs/configuration.html"><code>version_token</code></a>
+        configuration key can downgrade (<code>ignore</code>) or reject
+        (<code>reject</code>) it.
       </li>
       <li>
         Only <code>GET</code> is supported (anything else is 405, with an
@@ -97,7 +100,10 @@
     <div class="callout">
       Do not enable year-long immutable caching unless every caller changes
       <code>v</code> when source bytes change; the service cannot verify this
-      for you.
+      for you. The table shows the default
+      <code>version_token = "accept"</code>: with <code>"ignore"</code> a 200
+      with <code>v</code> uses the unversioned policy instead, and with
+      <code>"reject"</code> any <code>v</code> is a 400.
     </div>
 
     <h2 id="errors">Errors<a class="anchor" href="#errors" aria-label="Link to this section">#</a></h2>

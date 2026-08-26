@@ -59,7 +59,9 @@ GET /images/public/photos/example.jpg/w1280.webp?v=7d91c2
   rejected so each derived image has exactly one URL.
 - `v` is an opaque version token (`[A-Za-z0-9._~-]{1,128}`) used only for
   cache policy. The service never appends it to the upstream key. Callers
-  must change `v` whenever the source bytes change.
+  must change `v` whenever the source bytes change. The `version_token`
+  configuration key can downgrade (`ignore`) or reject (`reject`) it — see
+  Configuration below.
 - Only `GET` is supported (anything else is 405). Request targets over
   8192 bytes are rejected.
 
@@ -76,7 +78,10 @@ keeps its original dimensions.
 | every other error | `no-store` |
 
 Do not enable year-long immutable caching unless every caller changes `v`
-when source bytes change; the service cannot verify this for you.
+when source bytes change; the service cannot verify this for you. The
+table shows the default `version_token = "accept"`: with `"ignore"` a 200
+with `v` uses the unversioned policy instead, and with `"reject"` any `v`
+is a 400.
 
 ### Error taxonomy
 
@@ -114,6 +119,17 @@ Key limits:
 | `max_concurrent_derivations` | 1..=64 | process-wide fetch+process permits |
 | `unversioned_success_ttl_seconds` | 1..=86400 | cache lifetime without `v` |
 | `not_found_ttl_seconds` | 1..=3600 | cache lifetime of 404s |
+
+`version_token` (optional, default `"accept"`) decides what the `v` query
+parameter means; the value set is closed and anything else stops startup:
+
+- `accept`: a valid `v` upgrades the response to year-long immutable
+  caching (the default and pre-existing behavior).
+- `ignore`: `v` is parsed and validated exactly as in `accept`, but the
+  response is served with `unversioned_success_ttl_seconds` as if no `v`
+  were present. A well-formed `v` is never a 400.
+- `reject`: any `v` is a 400, like any other unknown query parameter, for
+  deployments that version sources by path. A missing `v` is always fine.
 
 Each enabled format gets its own `[formats.<name>]` block with a required
 `default_quality` and an optional `allowed_qualities` list (empty or absent

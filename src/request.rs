@@ -17,7 +17,7 @@
 //! path structure (missing source path / transform), then source-path
 //! segments left to right, then the Transform segment, then the query.
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, VersionTokenMode};
 use crate::errors::RequestError;
 use crate::types::{OutputFormat, ResolvedRequest, Transform, UpstreamKey};
 
@@ -85,7 +85,7 @@ pub fn parse_request(
     }
 
     let transform = parse_transform(config, transform_segment)?;
-    let versioned = parse_query(raw_query)?;
+    let versioned = parse_query(raw_query, config.version_token)?;
 
     Ok(ResolvedRequest {
         mount: mount.to_string(),
@@ -294,9 +294,14 @@ fn parse_transform(config: &AppConfig, raw: &str) -> Result<Transform, RequestEr
 }
 
 /// Validate the query string. Only `v` is known; it may appear at most
-/// once. Returns whether a valid `v` was present. An empty query string is
-/// treated as no query.
-fn parse_query(raw_query: Option<&str>) -> Result<bool, RequestError> {
+/// once. Returns whether the request counts as versioned. An empty query
+/// string is treated as no query.
+///
+/// `mode` decides what a well-formed `v` means: `accept` marks the request
+/// versioned, `ignore` validates the same grammar but reports the request
+/// as unversioned, and `reject` treats `v` like any other unknown query
+/// parameter.
+fn parse_query(raw_query: Option<&str>, mode: VersionTokenMode) -> Result<bool, RequestError> {
     let query = match raw_query {
         None => return Ok(false),
         Some("") => return Ok(false),
@@ -308,7 +313,7 @@ fn parse_query(raw_query: Option<&str>) -> Result<bool, RequestError> {
             Some((key, value)) => (key, Some(value)),
             None => (pair, None),
         };
-        if key != "v" {
+        if key != "v" || mode == VersionTokenMode::Reject {
             return Err(RequestError::InvalidQuery);
         }
         if versioned {
@@ -319,7 +324,7 @@ fn parse_query(raw_query: Option<&str>) -> Result<bool, RequestError> {
         validate_version_token(value)?;
         versioned = true;
     }
-    Ok(versioned)
+    Ok(versioned && mode == VersionTokenMode::Accept)
 }
 
 /// `v` must match `[A-Za-z0-9._~-]{1,128}` exactly; percent encoding is not

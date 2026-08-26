@@ -34,6 +34,9 @@ pub struct AppConfig {
     pub max_concurrent_derivations: usize,
     pub unversioned_success_ttl_seconds: u64,
     pub not_found_ttl_seconds: u64,
+    /// How the `v` query parameter is treated. Defaults to
+    /// [`VersionTokenMode::Accept`], today's behavior.
+    pub version_token: VersionTokenMode,
     /// Per-format policies. Only formats present here are enabled.
     pub formats: BTreeMap<OutputFormat, FormatPolicy>,
     pub sources: Vec<SourceConfig>,
@@ -49,6 +52,23 @@ impl AppConfig {
     pub fn source_for_mount(&self, mount: &str) -> Option<&SourceConfig> {
         self.sources.iter().find(|s| s.mount() == mount)
     }
+}
+
+/// How the service treats the `v` query parameter. A closed set: any other
+/// configured value is a startup error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VersionTokenMode {
+    /// A valid `v` upgrades the response to year-long immutable caching.
+    /// The default, and the only pre-existing behavior.
+    #[default]
+    Accept,
+    /// The query is parsed and validated exactly as in `accept`, but the
+    /// response is served with `unversioned_success_ttl_seconds` as if no
+    /// `v` were present. Never a 400 for a well-formed `v`.
+    Ignore,
+    /// Any `v` parameter is rejected like an unknown query parameter
+    /// (400). A missing `v` is fine.
+    Reject,
 }
 
 /// Encoder policy for one output format. Quality scales are not comparable
@@ -178,6 +198,7 @@ struct RawConfig {
     max_concurrent_derivations: i64,
     unversioned_success_ttl_seconds: i64,
     not_found_ttl_seconds: i64,
+    version_token: Option<String>,
     formats: BTreeMap<String, RawFormatPolicy>,
     sources: Vec<RawSource>,
 }
@@ -246,6 +267,7 @@ fn validate(raw: RawConfig, base_dir: &Path) -> Result<AppConfig, ConfigError> {
     )? as u64;
     let not_found_ttl_seconds =
         check_range("not_found_ttl_seconds", raw.not_found_ttl_seconds, 1, 3_600)? as u64;
+    let version_token = validate_version_token_mode(raw.version_token.as_deref())?;
 
     let formats = validate_formats(&raw.formats)?;
     let sources = validate_sources(&raw.sources, base_dir)?;
@@ -261,9 +283,23 @@ fn validate(raw: RawConfig, base_dir: &Path) -> Result<AppConfig, ConfigError> {
         max_concurrent_derivations,
         unversioned_success_ttl_seconds,
         not_found_ttl_seconds,
+        version_token,
         formats,
         sources,
     })
+}
+
+/// Omitted => `accept` (the pre-existing behavior). The value set is
+/// closed: anything else is a startup error.
+fn validate_version_token_mode(value: Option<&str>) -> Result<VersionTokenMode, ConfigError> {
+    match value {
+        None | Some("accept") => Ok(VersionTokenMode::Accept),
+        Some("ignore") => Ok(VersionTokenMode::Ignore),
+        Some("reject") => Ok(VersionTokenMode::Reject),
+        Some(other) => Err(ConfigError::new(format!(
+            "`version_token` must be `accept`, `ignore`, or `reject`, got `{other}`"
+        ))),
+    }
 }
 
 fn check_range(name: &str, value: i64, min: i64, max: i64) -> Result<i64, ConfigError> {

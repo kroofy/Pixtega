@@ -4,7 +4,7 @@
 
 The entire HTTP API is one GET endpoint:
 `GET {base}{pathPrefix}/{mount}/{source-path}/w{width}[,q{quality}].{format}[?v=token]`.
-The default `pathPrefix` is `/images`. `format` is one of `webp`, `avif`, `jpeg` (no aliases). `{mount}` selects an operator-configured source — callers never pass a hostname, bucket, or directory. Width and quality must be in server-configured allowlists; omitting `q` uses the format's default, and spelling out the default is rejected so each derived image has exactly one URL. `v` is an opaque cache-busting token only; it is never sent upstream. The service never upscales.
+The default `pathPrefix` is `/images`. `format` is one of `webp`, `avif`, `jpeg` (no aliases). `{mount}` selects an operator-configured source — callers never pass a hostname, bucket, or directory. Width and quality must be in server-configured allowlists; omitting `q` uses the format's default, and spelling out the default is rejected so each derived image has exactly one URL. `v` is an opaque cache-busting token only; it is never sent upstream, and the `version_token` config key can ignore or reject it. The service never upscales.
 
 The JavaScript client is pure URL builders for this contract: `pixtegaUrl`, `pixtegaSrcSet`, `pixtegaPicture`. It builds strings and never fetches.
 

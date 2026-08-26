@@ -101,8 +101,10 @@ pub struct ResolvedRequest {
     pub upstream_key: UpstreamKey,
     /// The resolved Transform.
     pub transform: Transform,
-    /// Whether the request carried a valid non-empty `v` query parameter.
-    /// Only the cache policy depends on this; the derived bytes do not.
+    /// Whether the request counts as versioned: it carried a valid
+    /// non-empty `v` query parameter and the configured `version_token`
+    /// mode is `accept`. Only the cache policy depends on this; the
+    /// derived bytes do not.
     pub versioned: bool,
 }
 

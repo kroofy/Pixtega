@@ -11,6 +11,15 @@ max_concurrent_derivations = 8
 unversioned_success_ttl_seconds = 3600
 not_found_ttl_seconds = 60
 
+# How the `v` query parameter is treated. Optional; defaults to "accept".
+#   accept - a valid `v` upgrades the response to year-long immutable caching
+#   ignore - `v` is parsed and validated as usual, but the response is served
+#            with unversioned_success_ttl_seconds as if no `v` were present
+#   reject - any `v` is a 400, like any other unknown query parameter
+#            (for deployments that version sources by path instead)
+# Any other value is a startup error.
+version_token = "accept"
+
 [formats.webp]
 default_quality = 82
 allowed_qualities = [60, 72, 90]
