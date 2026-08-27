@@ -16,8 +16,9 @@
 #     use InvokeMode RESPONSE_STREAM (image bodies can exceed the ~6 MB
 #     buffered response cap), and the adapter's invoke mode must match the
 #     Function URL's — a mismatch returns the adapter's buffered JSON
-#     envelope instead of the image bytes. ALB and API Gateway do not
-#     support streaming: override to AWS_LWA_INVOKE_MODE=buffered there.
+#     envelope instead of the image bytes. ALB cannot stream, and API
+#     Gateway streams only via a STREAM-mode REST proxy integration:
+#     otherwise override to AWS_LWA_INVOKE_MODE=buffered.
 #
 # The service must listen on the port the adapter forwards to (default
 # 8080), so configure: listen_address = "0.0.0.0:8080".

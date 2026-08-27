@@ -70,10 +70,12 @@
         <code>AWS_LWA_INVOKE_MODE=response_stream</code>, so create the
         Function URL with <code>--invoke-mode RESPONSE_STREAM</code> to
         match. If the two disagree, responses come back as the adapter's
-        buffered JSON envelope instead of image bytes. ALB and API Gateway
-        do not support Lambda response streaming — behind those triggers,
-        override the function environment to
-        <code>AWS_LWA_INVOKE_MODE=buffered</code>.
+        buffered JSON envelope instead of image bytes. ALB cannot stream —
+        behind an ALB, override the function environment to
+        <code>AWS_LWA_INVOKE_MODE=buffered</code>. API Gateway streams only
+        when the REST proxy integration uses
+        <code>responseTransferMode=STREAM</code>; otherwise override to
+        buffered so the modes match.
       </li>
       <li>
         <strong>S3 sources use the execution role.</strong> Credentials are

@@ -458,9 +458,10 @@ code and the same image runs on ECS, EC2, or locally.
   `AWS_LWA_INVOKE_MODE=response_stream`, so create the Function URL with
   `--invoke-mode RESPONSE_STREAM` to match. If the two disagree, responses
   come back as the adapter's buffered JSON envelope instead of image bytes.
-  ALB and API Gateway do not support Lambda response streaming — behind
-  those triggers, override the function environment to
-  `AWS_LWA_INVOKE_MODE=buffered`.
+  ALB cannot stream — behind an ALB, override the function environment to
+  `AWS_LWA_INVOKE_MODE=buffered`. API Gateway streams only when the REST
+  proxy integration uses `responseTransferMode=STREAM`; otherwise override
+  to buffered so the modes match.
 - **S3 sources use the execution role.** Credentials are never read from
   TOML; grant the function's role `s3:GetObject` on the configured prefix
   (and ideally `s3:ListBucket` so missing keys become cacheable 404s
