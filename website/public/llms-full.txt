@@ -454,6 +454,10 @@ code and the same image runs on ECS, EC2, or locally.
   `AWS_LWA_READINESS_CHECK_PROTOCOL=tcp` because the service has no HTTP
   health endpoint (`GET /` is a 400 by design); the adapter waits for the
   TCP socket instead of an HTTP 200.
+- **Response streaming by default.** The image sets
+  `AWS_LWA_INVOKE_MODE=response_stream`, so create the Function URL with
+  `--invoke-mode RESPONSE_STREAM` to match. If the two disagree, responses
+  come back as the adapter's buffered JSON envelope instead of image bytes.
 - **S3 sources use the execution role.** Credentials are never read from
   TOML; grant the function's role `s3:GetObject` on the configured prefix
   (and ideally `s3:ListBucket` so missing keys become cacheable 404s
@@ -479,7 +483,8 @@ aws lambda create-function \
   --environment "Variables={CONFIG=$(cat deploy/lambda/example-config.toml)}"
 
 # 4. Expose a Function URL for a smoke test (dev only — see below)
-aws lambda create-function-url-config --function-name pixtega --auth-type NONE
+aws lambda create-function-url-config --function-name pixtega \
+  --auth-type NONE --invoke-mode RESPONSE_STREAM
 curl -o out.webp "${FUNCTION_URL}images/fixtures/photos/example.jpg/w640.webp"
 ```
 
@@ -504,11 +509,13 @@ https://github.com/kroofy/Pixtega/blob/main/deploy/lambda/README.md.
 ### Caveats
 
 - **6 MB response limit.** Buffered Function URL responses are capped at
-  about 6 MB. Derived images are usually far smaller, but you can enable
-  response streaming (`--invoke-mode RESPONSE_STREAM` plus
-  `AWS_LWA_INVOKE_MODE=response_stream`) to raise the limit, or constrain
-  `allowed_widths` and `allowed_qualities` so oversized outputs cannot be
-  produced.
+  about 6 MB, so the image and this guide default to response streaming
+  (`AWS_LWA_INVOKE_MODE=response_stream` in the image plus
+  `--invoke-mode RESPONSE_STREAM` on the Function URL), which raises the
+  limit substantially. The two must stay in sync. To run buffered instead,
+  set the Function URL to BUFFERED *and* `AWS_LWA_INVOKE_MODE=buffered` on
+  the function, and consider constraining `allowed_widths` and
+  `allowed_qualities` so oversized outputs cannot be produced.
 - **Cold starts.** Each new execution environment loads libvips, validates
   configuration, and verifies every enabled encoder, so the first request
   is noticeably slower than warm ones. A CDN in front absorbs most of this
