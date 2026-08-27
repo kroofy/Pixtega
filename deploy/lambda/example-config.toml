@@ -15,7 +15,13 @@ allowed_widths = [320, 640, 1280, 1920]
 
 max_download_bytes = 52428800
 max_source_megapixels = 100
-download_timeout_ms = 10000
+download_timeout_ms = 5000
+# Keep the whole-request deadline below the Lambda function timeout. If the
+# host kills the sandbox mid-derivation on a streaming Function URL, the
+# already-committed 200 (with no Cache-Control) can be cached by a CDN as a
+# successful image; with this budget the service answers a real 504 with
+# `no-store` first. download_timeout_ms is spent from the same budget.
+request_timeout_ms = 9000
 max_redirects = 3
 max_concurrent_derivations = 8
 unversioned_success_ttl_seconds = 3600

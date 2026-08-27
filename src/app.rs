@@ -3,7 +3,7 @@
 //! logging.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use axum::extract::{Request, State};
@@ -18,7 +18,18 @@ use crate::logging::CompletionEvent;
 use crate::processor;
 use crate::request::parse_request;
 use crate::sources::SourceRegistry;
-use crate::types::{OutputFormat, ResolvedRequest};
+use crate::types::{OutputFormat, ResolvedRequest, Transform};
+
+/// The synchronous processing function run on a blocking thread. The real
+/// pipeline is [`processor::process_image`]; tests may substitute a slow or
+/// instrumented processor instead of relying on multi-second image fixtures.
+pub type ProcessFn =
+    Arc<dyn Fn(&[u8], &Transform, u64) -> Result<Vec<u8>, ProcessError> + Send + Sync>;
+
+/// Stable public message for a request that ran out of its
+/// `request_timeout_ms` budget. Like the taxonomy messages, it never
+/// contains caller input.
+pub const REQUEST_TIMEOUT_MESSAGE: &str = "request timed out";
 
 /// Shared state for the HTTP application.
 pub struct AppState {
@@ -26,17 +37,36 @@ pub struct AppState {
     pub registry: SourceRegistry,
     /// Process-wide derivation permits: no more than
     /// `max_concurrent_derivations` Source Objects are fetched or processed
-    /// at once. Acquired before fetching, held through processing.
-    pub derivation_permits: Semaphore,
+    /// at once. Acquired before fetching; released only when the blocking
+    /// processing work actually finishes (libvips cannot be cancelled, so a
+    /// timed-out derivation keeps occupying its slot until then).
+    pub derivation_permits: Arc<Semaphore>,
+    pub process: ProcessFn,
 }
 
 impl AppState {
     pub fn new(config: AppConfig, registry: SourceRegistry) -> Arc<Self> {
+        Self::with_processor(
+            config,
+            registry,
+            Arc::new(|bytes, transform, max_megapixels| {
+                processor::process_image(bytes, transform, max_megapixels)
+            }),
+        )
+    }
+
+    /// [`AppState::new`] with an explicit processing function (test seam).
+    pub fn with_processor(
+        config: AppConfig,
+        registry: SourceRegistry,
+        process: ProcessFn,
+    ) -> Arc<Self> {
         let permits = config.max_concurrent_derivations;
         Arc::new(AppState {
             config,
             registry,
-            derivation_permits: Semaphore::new(permits),
+            derivation_permits: Arc::new(Semaphore::new(permits)),
+            process,
         })
     }
 }
@@ -135,6 +165,13 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
 }
 
 async fn respond(state: &AppState, method: &Method, uri: &Uri) -> (Response, Report) {
+    // The whole-request budget. Waiting for a derivation permit, fetching
+    // the Source Object, and processing all spend from this one deadline,
+    // so an operator can keep the service's own answer (a real 504 with
+    // `no-store`) below a host kill deadline such as a Lambda timeout.
+    let deadline =
+        tokio::time::Instant::now() + Duration::from_millis(state.config.request_timeout_ms);
+
     // HEAD takes exactly the GET path — same routing, derivation, status,
     // and headers. The body is dropped at the end of `handle`, so the
     // advertised Content-Length stays that of the equivalent GET response.
@@ -176,40 +213,69 @@ async fn respond(state: &AppState, method: &Method, uri: &Uri) -> (Response, Rep
         return (response, report);
     };
 
-    // One process-wide permit bounds fetching AND processing together; it is
-    // held (`_permit` lives to the end of this scope) through both.
-    let _permit = state
-        .derivation_permits
-        .acquire()
-        .await
-        .expect("derivation semaphore is never closed");
+    // One process-wide permit bounds fetching AND processing together. It
+    // is owned so it can ride with the blocking work below and be released
+    // only when that work truly finishes.
+    let permit =
+        match tokio::time::timeout_at(deadline, state.derivation_permits.clone().acquire_owned())
+            .await
+        {
+            Ok(acquired) => acquired.expect("derivation semaphore is never closed"),
+            Err(_elapsed) => return timeout_response(state, report),
+        };
 
-    let fetched = match source.fetch(&resolved.upstream_key).await {
-        Ok(fetched) => fetched,
-        Err(err) => {
-            report.outcome = err.outcome();
-            report.upstream_status = err.upstream_status();
-            let response =
-                error_response(state, taxonomy_status(err.status()), err.public_message());
-            return (response, report);
-        }
-    };
+    // The fetch spends from the same budget. The adapter's own
+    // `download_timeout_ms` (validated to never exceed the request budget)
+    // usually fires first; this outer bound only wins when earlier waiting
+    // already consumed part of the budget. Dropping the fetch future
+    // cancels the in-flight download.
+    let fetched =
+        match tokio::time::timeout_at(deadline, source.fetch(&resolved.upstream_key)).await {
+            Ok(Ok(fetched)) => fetched,
+            Ok(Err(err)) => {
+                report.outcome = err.outcome();
+                report.upstream_status = err.upstream_status();
+                let response =
+                    error_response(state, taxonomy_status(err.status()), err.public_message());
+                return (response, report);
+            }
+            Err(_elapsed) => return timeout_response(state, report),
+        };
     report.upstream_status = fetched.upstream_status;
     report.input_bytes = Some(fetched.bytes.len() as u64);
 
-    // CPU-bound synchronous work on a blocking thread, permit still held.
+    // Whatever the fetch left of the budget is what processing gets. A
+    // fetch that exhausted it means 504 without starting libvips at all.
+    if deadline
+        .checked_duration_since(tokio::time::Instant::now())
+        .is_none()
+    {
+        return timeout_response(state, report);
+    }
+
+    // CPU-bound synchronous work on a blocking thread. The permit moves
+    // into the closure: libvips cannot be cancelled, so when the deadline
+    // below fires the abandoned encode keeps running — and keeps its
+    // derivation slot — until it actually returns. Releasing the permit on
+    // timeout instead would let abandoned encodes pile up past
+    // `max_concurrent_derivations`.
     let transform = resolved.transform;
     let max_megapixels = state.config.max_source_megapixels;
     let source_bytes = fetched.bytes;
-    let processed = tokio::task::spawn_blocking(move || {
-        processor::process_image(&source_bytes, &transform, max_megapixels)
-    })
-    .await
-    .unwrap_or_else(|join_error| {
-        Err(ProcessError::Encode {
-            detail: format!("processing task failed: {join_error}"),
-        })
+    let process = state.process.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        let result = process(&source_bytes, &transform, max_megapixels);
+        drop(permit);
+        result
     });
+    let processed = match tokio::time::timeout_at(deadline, join).await {
+        Ok(joined) => joined.unwrap_or_else(|join_error| {
+            Err(ProcessError::Encode {
+                detail: format!("processing task failed: {join_error}"),
+            })
+        }),
+        Err(_elapsed) => return timeout_response(state, report),
+    };
 
     let derived = match processed {
         Ok(bytes) => bytes,
@@ -223,6 +289,15 @@ async fn respond(state: &AppState, method: &Method, uri: &Uri) -> (Response, Rep
     report.output_bytes = Some(derived.len() as u64);
 
     (success_response(state, &resolved, derived), report)
+}
+
+/// The request ran out of its `request_timeout_ms` budget: a real 504
+/// through the existing failure path, so the client sees
+/// `Cache-Control: no-store` instead of a host-killed 200 envelope.
+fn timeout_response(state: &AppState, mut report: Report) -> (Response, Report) {
+    report.outcome = Outcome::Timeout;
+    let response = error_response(state, StatusCode::GATEWAY_TIMEOUT, REQUEST_TIMEOUT_MESSAGE);
+    (response, report)
 }
 
 /// Replace the response body with an empty one, advertising the dropped

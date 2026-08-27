@@ -14,11 +14,12 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use image::RgbImage;
-use pixtega::app::{build_router, AppState};
+use pixtega::app::{build_router, AppState, ProcessFn, REQUEST_TIMEOUT_MESSAGE};
 use pixtega::config::{
     AppConfig, FilesystemSourceConfig, FormatPolicy, HttpSourceConfig, SourceConfig,
     VersionTokenMode,
@@ -176,6 +177,14 @@ const UNVERSIONED_TTL: u64 = 777;
 const NOT_FOUND_TTL: u64 = 55;
 
 fn test_config(sources: Vec<SourceConfig>, download_timeout_ms: u64) -> AppConfig {
+    test_config_with_deadline(sources, download_timeout_ms, 30_000)
+}
+
+fn test_config_with_deadline(
+    sources: Vec<SourceConfig>,
+    download_timeout_ms: u64,
+    request_timeout_ms: u64,
+) -> AppConfig {
     let mut formats = BTreeMap::new();
     formats.insert(
         OutputFormat::Webp,
@@ -205,6 +214,7 @@ fn test_config(sources: Vec<SourceConfig>, download_timeout_ms: u64) -> AppConfi
         max_download_bytes: 10 * 1024 * 1024,
         max_source_megapixels: 100,
         download_timeout_ms,
+        request_timeout_ms,
         max_redirects: 3,
         max_concurrent_derivations: 4,
         unversioned_success_ttl_seconds: UNVERSIONED_TTL,
@@ -239,6 +249,25 @@ async fn spawn_app(config: AppConfig) -> SocketAddr {
         .await
         .expect("registry construction");
     let state = AppState::new(config, registry);
+    serve_state(state).await
+}
+
+/// Spawn the app with an injected processing function (the test seam for
+/// deadline behavior), returning the shared state so tests can observe the
+/// derivation semaphore.
+async fn spawn_app_with_processor(
+    config: AppConfig,
+    process: ProcessFn,
+) -> (SocketAddr, Arc<AppState>) {
+    let registry = SourceRegistry::from_config(&config)
+        .await
+        .expect("registry construction");
+    let state = AppState::with_processor(config, registry, process);
+    let addr = serve_state(state.clone()).await;
+    (addr, state)
+}
+
+async fn serve_state(state: Arc<AppState>) -> SocketAddr {
     let router = build_router(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -473,6 +502,124 @@ async fn source_timeout_is_a_non_cacheable_504() {
     assert_no_store(&response);
     assert_error_body(&response);
     assert_security_headers(&response);
+}
+
+// ---------------------------------------------------------------------------
+// The request-scoped deadline (request_timeout_ms)
+// ---------------------------------------------------------------------------
+
+/// When processing outlives the request budget, the caller gets a real 504
+/// with `no-store` — never a committed 200 for a host kill to corrupt — and
+/// HEAD carries exactly the GET headers with an empty body.
+#[tokio::test]
+async fn a_processing_deadline_expiry_is_a_non_cacheable_504_and_head_matches_get() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("photo.jpg"), jpeg_fixture(64, 64)).unwrap();
+    let config = test_config_with_deadline(vec![filesystem_source(dir.path())], 200, 200);
+    // A processor far slower than the 200 ms budget, without any
+    // multi-second image fixture.
+    let process: ProcessFn = Arc::new(|_bytes, _transform, _megapixels| {
+        std::thread::sleep(Duration::from_millis(1_000));
+        Ok(vec![0u8; 8])
+    });
+    let (addr, _state) = spawn_app_with_processor(config, process).await;
+
+    let target = "/images/files/photo.jpg/w320.webp?v=abc-123";
+    let get = send_request(addr, "GET", target).await;
+    assert_eq!(get.status, 504);
+    assert_no_store(&get);
+    assert_error_body(&get);
+    assert_security_headers(&get);
+    let parsed: serde_json::Value = serde_json::from_slice(&get.body).unwrap();
+    assert_eq!(parsed["error"], REQUEST_TIMEOUT_MESSAGE);
+
+    let head = send_request(addr, "HEAD", target).await;
+    assert_eq!(head.status, 504);
+    for header in ["content-type", "cache-control"] {
+        assert_eq!(head.header(header), get.header(header), "header {header}");
+    }
+    assert!(head.body.is_empty(), "HEAD response must have no body");
+    let advertised: usize = head
+        .header("content-length")
+        .expect("HEAD carries Content-Length")
+        .parse()
+        .expect("numeric Content-Length");
+    assert_eq!(advertised, get.body.len());
+}
+
+/// The blocking thread cannot be cancelled, so a timed-out derivation must
+/// keep its permit until the processing function actually returns —
+/// otherwise abandoned encodes could pile up past
+/// `max_concurrent_derivations`.
+#[tokio::test]
+async fn a_timed_out_derivation_holds_its_permit_until_the_blocking_work_finishes() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("photo.jpg"), jpeg_fixture(64, 64)).unwrap();
+    let mut config = test_config_with_deadline(vec![filesystem_source(dir.path())], 150, 150);
+    config.max_concurrent_derivations = 1;
+
+    let release = Arc::new(AtomicBool::new(false));
+    let finished = Arc::new(AtomicUsize::new(0));
+    let process: ProcessFn = {
+        let release = release.clone();
+        let finished = finished.clone();
+        Arc::new(move |_bytes, _transform, _megapixels| {
+            while !release.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            finished.fetch_add(1, Ordering::SeqCst);
+            Ok(vec![0u8; 8])
+        })
+    };
+    let (addr, state) = spawn_app_with_processor(config, process).await;
+
+    let response = send_request(addr, "GET", "/images/files/photo.jpg/w320.webp").await;
+    assert_eq!(response.status, 504);
+    assert_no_store(&response);
+
+    // The 504 has been sent but the encode is still running: the one
+    // derivation permit stays occupied.
+    assert_eq!(state.derivation_permits.available_permits(), 0);
+    assert_eq!(finished.load(Ordering::SeqCst), 0);
+
+    // Only when the blocking work finishes does the permit come back.
+    release.store(true, Ordering::SeqCst);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while state.derivation_permits.available_permits() == 0 {
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "permit must be released once the blocking work finishes"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(finished.load(Ordering::SeqCst), 1);
+}
+
+/// The download timeout nests inside the request budget: a fetch that
+/// spends all of it leaves nothing for processing, which must then not
+/// start at all.
+#[tokio::test]
+async fn a_fetch_that_spends_the_whole_budget_never_starts_processing() {
+    let port = start_fixture(HashMap::from([("/slow.jpg".to_string(), Script::Stall)])).await;
+    let config = test_config_with_deadline(vec![http_source(port)], 300, 300);
+    let started = Arc::new(AtomicBool::new(false));
+    let process: ProcessFn = {
+        let started = started.clone();
+        Arc::new(move |_bytes, _transform, _megapixels| {
+            started.store(true, Ordering::SeqCst);
+            Ok(vec![0u8; 8])
+        })
+    };
+    let (addr, _state) = spawn_app_with_processor(config, process).await;
+
+    let response = send_request(addr, "GET", "/images/pics/slow.jpg/w320.webp").await;
+    assert_eq!(response.status, 504);
+    assert_no_store(&response);
+    assert_error_body(&response);
+    assert!(
+        !started.load(Ordering::SeqCst),
+        "processing must not start after the fetch exhausted the budget"
+    );
 }
 
 // ---------------------------------------------------------------------------

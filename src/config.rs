@@ -30,6 +30,10 @@ pub struct AppConfig {
     pub max_download_bytes: u64,
     pub max_source_megapixels: u64,
     pub download_timeout_ms: u64,
+    /// Whole-request deadline. `download_timeout_ms` is spent from this
+    /// same budget; processing gets whatever remains after the fetch.
+    /// Never smaller than `download_timeout_ms`. Defaults to 9000.
+    pub request_timeout_ms: u64,
     pub max_redirects: u32,
     pub max_concurrent_derivations: usize,
     pub unversioned_success_ttl_seconds: u64,
@@ -194,6 +198,7 @@ struct RawConfig {
     max_download_bytes: i64,
     max_source_megapixels: i64,
     download_timeout_ms: i64,
+    request_timeout_ms: Option<i64>,
     max_redirects: i64,
     max_concurrent_derivations: i64,
     unversioned_success_ttl_seconds: i64,
@@ -252,6 +257,28 @@ fn validate(raw: RawConfig, base_dir: &Path) -> Result<AppConfig, ConfigError> {
         check_range("max_source_megapixels", raw.max_source_megapixels, 1, 500)? as u64;
     let download_timeout_ms =
         check_range("download_timeout_ms", raw.download_timeout_ms, 1, 60_000)? as u64;
+    // Optional with a default that sits under a typical 10-second host kill
+    // deadline (for example an AWS Lambda function timeout).
+    let request_timeout_ms = check_range(
+        "request_timeout_ms",
+        raw.request_timeout_ms.unwrap_or(9_000),
+        1,
+        300_000,
+    )? as u64;
+    // The download timeout is spent from the request budget, so a fetch
+    // allowed to outlast the whole request is a configuration error.
+    if download_timeout_ms > request_timeout_ms {
+        return Err(ConfigError::new(format!(
+            "`download_timeout_ms` ({download_timeout_ms}) must not exceed \
+             `request_timeout_ms` ({request_timeout_ms}{default_note}): the source fetch \
+             is spent from the whole-request budget",
+            default_note = if raw.request_timeout_ms.is_none() {
+                ", the default"
+            } else {
+                ""
+            }
+        )));
+    }
     let max_redirects = check_range("max_redirects", raw.max_redirects, 0, 10)? as u32;
     let max_concurrent_derivations = check_range(
         "max_concurrent_derivations",
@@ -279,6 +306,7 @@ fn validate(raw: RawConfig, base_dir: &Path) -> Result<AppConfig, ConfigError> {
         max_download_bytes,
         max_source_megapixels,
         download_timeout_ms,
+        request_timeout_ms,
         max_redirects,
         max_concurrent_derivations,
         unversioned_success_ttl_seconds,

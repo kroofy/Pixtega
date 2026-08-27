@@ -77,6 +77,11 @@ max_download_bytes = 52428800
 max_source_megapixels = 100
 # One timeout over the whole source exchange.
 download_timeout_ms = 10000
+# Whole-request deadline. The source fetch (download_timeout_ms, which
+# must not exceed this) and image processing spend from this one budget;
+# expiry is a non-cacheable 504. Optional; defaults to 9000. Keep it
+# below any host kill deadline (e.g. an AWS Lambda function timeout).
+request_timeout_ms = 30000
 # HTTP(S) redirect bound (same origin, same base path only).
 max_redirects = 3
 # Process-wide fetch+process permits.
@@ -138,7 +143,8 @@ region = "us-east-1"</code></pre>
         <tr><td><code>allowed_widths</code></td><td>each in 1..=16384</td><td>the closed Width Allowlist</td></tr>
         <tr><td><code>max_download_bytes</code></td><td>1..=104857600</td><td>source size cap, enforced on the advertised length and again while streaming</td></tr>
         <tr><td><code>max_source_megapixels</code></td><td>1..=500</td><td>decode-bomb guard, checked from header metadata before decoding</td></tr>
-        <tr><td><code>download_timeout_ms</code></td><td>1..=60000</td><td>one timeout over the whole source exchange</td></tr>
+        <tr><td><code>download_timeout_ms</code></td><td>1..=60000</td><td>one timeout over the whole source exchange; never larger than <code>request_timeout_ms</code></td></tr>
+        <tr><td><code>request_timeout_ms</code></td><td>1..=300000</td><td>whole-request deadline (optional, default 9000); fetch and processing spend from this one budget, expiry is a non-cacheable 504</td></tr>
         <tr><td><code>max_redirects</code></td><td>0..=10</td><td>HTTP(S) redirect bound (same origin, same base path only)</td></tr>
         <tr><td><code>max_concurrent_derivations</code></td><td>1..=64</td><td>process-wide fetch+process permits</td></tr>
         <tr><td><code>unversioned_success_ttl_seconds</code></td><td>1..=86400</td><td>cache lifetime without <code>v</code></td></tr>
@@ -146,6 +152,17 @@ region = "us-east-1"</code></pre>
         <tr><td><code>version_token</code></td><td><code>accept</code> | <code>ignore</code> | <code>reject</code></td><td>what the <code>v</code> query parameter means (default <code>accept</code>; any other value stops startup)</td></tr>
       </tbody>
     </table>
+    <p>
+      <code>request_timeout_ms</code> is the deadline for answering one
+      request: the source fetch (bounded by <code>download_timeout_ms</code>,
+      which must not exceed it) and decode/resize/encode all spend from the
+      same budget, and expiry is a real 504 with
+      <code>Cache-Control: no-store</code>. Keep it below any host kill
+      deadline (for example an AWS Lambda function timeout) so the service
+      answers before the host tears the response down mid-stream. A
+      timed-out encode cannot be cancelled: it keeps occupying its
+      <code>max_concurrent_derivations</code> slot until libvips returns.
+    </p>
     <p>
       <code>version_token</code> is the operator lever over the
       <code>v</code> cache-busting parameter: <code>accept</code> (the

@@ -121,7 +121,7 @@
         <tr><td>405</td><td>method other than GET or HEAD</td></tr>
         <tr><td>500</td><td>flatten/encode failed after a valid source was accepted</td></tr>
         <tr><td>502</td><td>source answered without a usable object: permission denied, unexpected upstream status, oversized content, undecodable or unsupported image bytes</td></tr>
-        <tr><td>504</td><td>fetching the source timed out</td></tr>
+        <tr><td>504</td><td>fetching the source timed out, or the whole request exceeded <code>request_timeout_ms</code></td></tr>
       </tbody>
     </table>
     <p>

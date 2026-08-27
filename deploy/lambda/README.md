@@ -221,6 +221,15 @@ S3 mount, e.g. `${FUNCTION_URL}images/photos/cat.jpg/w1280.webp?v=1`.
   `/response-streaming-invocations` integration URI, and where Function
   URL response streaming itself is unavailable — VPC-attached functions
   and some AWS Regions.
+- **Keep `request_timeout_ms` below the function timeout.** If the sandbox
+  is killed mid-derivation on a `RESPONSE_STREAM` Function URL, the HTTP
+  200 is already committed and the caller receives a `Sandbox.Timedout`
+  JSON body with no `Cache-Control` — which a CDN may cache as a successful
+  image for its default TTL. With the service's own deadline under the host
+  kill (the example config uses 9000 against a 30-second function timeout;
+  the default is 9000), a slow derivation is answered as a real 504 with
+  `Cache-Control: no-store` instead. Large AVIF widths are the slow path
+  most likely to need this.
 - **Cold starts.** Each cold start loads libvips and validates
   configuration, including verifying every enabled encoder; the first
   request on a new execution environment is noticeably slower than warm
