@@ -216,8 +216,10 @@ S3 mount, e.g. `${FUNCTION_URL}images/photos/cat.jpg/w1280.webp?v=1`.
   it explicitly) *and* set `AWS_LWA_INVOKE_MODE=buffered` in the function
   environment — then consider constraining `allowed_widths` and
   `allowed_qualities` so outputs cannot exceed the 6 MB cap. The buffered
-  opt-out is mandatory behind an ALB (no streaming support) and behind an
-  API Gateway integration that is not `responseTransferMode=STREAM`.
+  opt-out is mandatory behind an ALB (no streaming support), behind an
+  API Gateway integration that is not `responseTransferMode=STREAM`, and
+  where Function URL response streaming itself is unavailable —
+  VPC-attached functions and some AWS Regions.
 - **Cold starts.** Each cold start loads libvips and validates
   configuration, including verifying every enabled encoder; the first
   request on a new execution environment is noticeably slower than warm

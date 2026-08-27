@@ -519,7 +519,9 @@ https://github.com/kroofy/Pixtega/blob/main/deploy/lambda/README.md.
   limit substantially. The two must stay in sync. To run buffered instead,
   set the Function URL to BUFFERED *and* `AWS_LWA_INVOKE_MODE=buffered` on
   the function, and consider constraining `allowed_widths` and
-  `allowed_qualities` so oversized outputs cannot be produced.
+  `allowed_qualities` so oversized outputs cannot be produced. Buffered is
+  required where Function URL streaming is unavailable: VPC-attached
+  functions and some AWS Regions.
 - **Cold starts.** Each new execution environment loads libvips, validates
   configuration, and verifies every enabled encoder, so the first request
   is noticeably slower than warm ones. A CDN in front absorbs most of this

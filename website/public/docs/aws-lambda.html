@@ -141,7 +141,8 @@ curl -o out.webp "${FUNCTION_URL}images/fixtures/photos/example.jpg/w640.webp"</
         BUFFERED <em>and</em> <code>AWS_LWA_INVOKE_MODE=buffered</code> on
         the function, and consider constraining <code>allowed_widths</code>
         and <code>allowed_qualities</code> so oversized outputs cannot be
-        produced.
+        produced. Buffered is required where Function URL streaming is
+        unavailable: VPC-attached functions and some AWS Regions.
       </li>
       <li>
         <strong>Cold starts.</strong> Each new execution environment loads
