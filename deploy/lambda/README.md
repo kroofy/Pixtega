@@ -130,7 +130,11 @@ Notes:
   so the adapter waits for the TCP socket instead of an HTTP 200) and
   `AWS_LWA_INVOKE_MODE=response_stream` (to match the streaming Function
   URL created below) in the image. If you override the image environment,
-  keep both variables.
+  keep both variables. Exception: ALB and API Gateway do not support
+  Lambda response streaming — behind those triggers, set
+  `AWS_LWA_INVOKE_MODE=buffered` in the function environment instead (the
+  same pairing rule applies: the adapter's mode must match how the
+  function is invoked).
 - Lambda CPU scales with memory. Image decode/resize/encode is CPU-bound;
   1024 MB is a reasonable floor, and larger widths or AVIF output benefit
   from more.
@@ -209,7 +213,9 @@ S3 mount, e.g. `${FUNCTION_URL}images/photos/cat.jpg/w1280.webp?v=1`.
   both: create the Function URL as BUFFERED (omit `--invoke-mode` or set
   it explicitly) *and* set `AWS_LWA_INVOKE_MODE=buffered` in the function
   environment — then consider constraining `allowed_widths` and
-  `allowed_qualities` so outputs cannot exceed the 6 MB cap.
+  `allowed_qualities` so outputs cannot exceed the 6 MB cap. The buffered
+  opt-out is mandatory behind ALB or API Gateway, which do not support
+  Lambda response streaming.
 - **Cold starts.** Each cold start loads libvips and validates
   configuration, including verifying every enabled encoder; the first
   request on a new execution environment is noticeably slower than warm
