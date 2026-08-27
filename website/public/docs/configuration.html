@@ -77,10 +77,12 @@ max_download_bytes = 52428800
 max_source_megapixels = 100
 # One timeout over the whole source exchange.
 download_timeout_ms = 10000
-# Whole-request deadline. The source fetch (download_timeout_ms, which
-# must not exceed this) and image processing spend from this one budget;
-# expiry is a non-cacheable 504. Optional; defaults to 9000. Keep it
-# below any host kill deadline (e.g. an AWS Lambda function timeout).
+# Whole-request deadline. Waiting for a max_concurrent_derivations
+# permit, the source fetch (download_timeout_ms, which must not exceed
+# this), and image processing all spend from this one budget; expiry is
+# a non-cacheable 504, possibly before the fetch or processing even
+# starts. Optional; defaults to 9000. Keep it below any host kill
+# deadline (e.g. an AWS Lambda function timeout).
 request_timeout_ms = 30000
 # HTTP(S) redirect bound (same origin, same base path only).
 max_redirects = 3
@@ -144,7 +146,7 @@ region = "us-east-1"</code></pre>
         <tr><td><code>max_download_bytes</code></td><td>1..=104857600</td><td>source size cap, enforced on the advertised length and again while streaming</td></tr>
         <tr><td><code>max_source_megapixels</code></td><td>1..=500</td><td>decode-bomb guard, checked from header metadata before decoding</td></tr>
         <tr><td><code>download_timeout_ms</code></td><td>1..=60000</td><td>one timeout over the whole source exchange; never larger than <code>request_timeout_ms</code></td></tr>
-        <tr><td><code>request_timeout_ms</code></td><td>1..=300000</td><td>whole-request deadline (optional, default 9000); fetch and processing spend from this one budget, expiry is a non-cacheable 504</td></tr>
+        <tr><td><code>request_timeout_ms</code></td><td>1..=300000</td><td>whole-request deadline (optional, default 9000); permit wait, fetch, and processing spend from this one budget, expiry is a non-cacheable 504</td></tr>
         <tr><td><code>max_redirects</code></td><td>0..=10</td><td>HTTP(S) redirect bound (same origin, same base path only)</td></tr>
         <tr><td><code>max_concurrent_derivations</code></td><td>1..=64</td><td>process-wide fetch+process permits</td></tr>
         <tr><td><code>unversioned_success_ttl_seconds</code></td><td>1..=86400</td><td>cache lifetime without <code>v</code></td></tr>
@@ -154,10 +156,13 @@ region = "us-east-1"</code></pre>
     </table>
     <p>
       <code>request_timeout_ms</code> is the deadline for answering one
-      request: the source fetch (bounded by <code>download_timeout_ms</code>,
-      which must not exceed it) and decode/resize/encode all spend from the
-      same budget, and expiry is a real 504 with
-      <code>Cache-Control: no-store</code>. Keep it below any host kill
+      request: waiting for a <code>max_concurrent_derivations</code> permit,
+      the source fetch (bounded by <code>download_timeout_ms</code>, which
+      must not exceed it), and decode/resize/encode all spend from the same
+      budget, and expiry is a real 504 with
+      <code>Cache-Control: no-store</code> &mdash; a request queued behind
+      slow derivations can therefore time out before its fetch or processing
+      even starts. Keep the deadline below any host kill
       deadline (for example an AWS Lambda function timeout) so the service
       answers before the host tears the response down mid-stream. A
       timed-out encode cannot be cancelled: it keeps occupying its

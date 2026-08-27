@@ -6,9 +6,11 @@ allowed_widths = [320, 640, 1280, 1920]
 max_download_bytes = 52428800
 max_source_megapixels = 100
 download_timeout_ms = 10000
-# Whole-request deadline. The source fetch (download_timeout_ms, which must
-# not exceed this) and image processing spend from this one budget; expiry
-# is a non-cacheable 504. Optional; defaults to 9000. Keep it below any
+# Whole-request deadline. Waiting for a max_concurrent_derivations permit,
+# the source fetch (download_timeout_ms, which must not exceed this), and
+# image processing all spend from this one budget; expiry is a
+# non-cacheable 504, possibly before the fetch or processing even starts.
+# Optional; defaults to 9000. Keep it below any
 # host kill deadline (e.g. an AWS Lambda function timeout) so the service
 # answers before the host does. A timed-out encode cannot be cancelled and
 # keeps its derivation slot until libvips returns.
