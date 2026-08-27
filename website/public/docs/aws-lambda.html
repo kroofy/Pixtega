@@ -74,8 +74,9 @@
         behind an ALB, override the function environment to
         <code>AWS_LWA_INVOKE_MODE=buffered</code>. API Gateway streams only
         when the REST proxy integration uses
-        <code>responseTransferMode=STREAM</code>; otherwise override to
-        buffered so the modes match.
+        <code>responseTransferMode=STREAM</code> with a
+        <code>/response-streaming-invocations</code> integration URI;
+        otherwise override to buffered so the modes match.
       </li>
       <li>
         <strong>S3 sources use the execution role.</strong> Credentials are

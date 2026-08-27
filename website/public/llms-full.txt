@@ -460,7 +460,8 @@ code and the same image runs on ECS, EC2, or locally.
   come back as the adapter's buffered JSON envelope instead of image bytes.
   ALB cannot stream — behind an ALB, override the function environment to
   `AWS_LWA_INVOKE_MODE=buffered`. API Gateway streams only when the REST
-  proxy integration uses `responseTransferMode=STREAM`; otherwise override
+  proxy integration uses `responseTransferMode=STREAM` with a
+  `/response-streaming-invocations` integration URI; otherwise override
   to buffered so the modes match.
 - **S3 sources use the execution role.** Credentials are never read from
   TOML; grant the function's role `s3:GetObject` on the configured prefix
