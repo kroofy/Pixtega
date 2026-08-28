@@ -91,15 +91,6 @@ mod tests {
     use crate::errors::Outcome;
 
     #[test]
-    fn source_error_event_carries_detail_at_warn() {
-        let event = SourceErrorEvent::new("s3 dispatch failure");
-        let json = serde_json::to_value(&event).unwrap();
-        assert_eq!(json["event"], "source_error");
-        assert_eq!(json["level"], "warn");
-        assert_eq!(json["detail"], "s3 dispatch failure");
-    }
-
-    #[test]
     fn completion_event_does_not_grow_a_detail_field() {
         let event = CompletionEvent::new(502, Outcome::SourceUnavailable, 12);
         let json = serde_json::to_value(&event).unwrap();

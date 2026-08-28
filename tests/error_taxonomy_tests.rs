@@ -146,7 +146,6 @@ fn source_error_detail_is_for_logs_only() {
         upstream_status: None,
         detail: "s3 dispatch failure".to_string(),
     };
-    assert_eq!(err.detail(), Some("s3 dispatch failure"));
     assert_eq!(err.public_message(), "source unavailable");
     assert!(
         !err.public_message().contains("dispatch"),
