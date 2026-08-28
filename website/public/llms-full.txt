@@ -533,8 +533,9 @@ test above only, not for an internet-facing production endpoint. For
 production, put CloudFront in front (the service's cache policy is designed
 for it), switch the Function URL to `--auth-type AWS_IAM` with a CloudFront
 Origin Access Control (OAC) for Lambda Function URLs so only the
-distribution can invoke the function, and remove the public `NONE` invoke
-permission. Details in
+distribution can invoke the function, and remove both public `NONE`
+resource-policy statements: `lambda:InvokeFunctionUrl` and the scoped
+`lambda:InvokeFunction` (`--invoked-via-function-url`). Details in
 https://github.com/kroofy/Pixtega/blob/main/deploy/lambda/README.md.
 
 ### Caveats
