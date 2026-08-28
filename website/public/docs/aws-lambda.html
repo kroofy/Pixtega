@@ -109,8 +109,16 @@ aws lambda create-function-url-config --function-name pixtega \
   --auth-type NONE --invoke-mode RESPONSE_STREAM
 curl -o out.webp "${FUNCTION_URL}images/fixtures/photos/example.jpg/w640.webp"</code></pre>
     <p>
-      The complete walkthrough — ECR login, IAM policies, permissions for the
-      public URL, and the smoke test — lives in the repository at
+      A CLI-created <code>NONE</code>-auth Function URL also needs two
+      resource-policy statements before unsigned requests stop 403ing:
+      <code>lambda:InvokeFunctionUrl</code> <em>and</em>
+      <code>lambda:InvokeFunction</code> (scoped with
+      <code>--invoked-via-function-url</code>).
+    </p>
+    <p>
+      The complete walkthrough — ECR login, IAM policies, both
+      <code>add-permission</code> commands for the public URL, and the smoke
+      test — lives in the repository at
       <a href="https://github.com/kroofy/Pixtega/blob/main/deploy/lambda/README.md">deploy/lambda/README.md</a>,
       with a ready-made
       <a href="https://github.com/kroofy/Pixtega/blob/main/deploy/lambda/example-config.toml">example-config.toml</a>.

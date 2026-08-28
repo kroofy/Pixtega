@@ -37,8 +37,10 @@
     <h1>Configuration</h1>
     <p class="lead">
       Pixtega is configured with a single TOML document. The schema is closed:
-      an unknown field stops startup, as does any invalid value. There are no
-      silent defaults for limits — what you configure is what runs.
+      an unknown field stops startup, as does any invalid value. What you
+      configure is what runs; the few optional keys fall back to documented
+      defaults (<code>request_timeout_ms</code>, for example, defaults to
+      9000 when omitted — the deadline is never silently disabled).
     </p>
 
     <h2 id="where-configuration-comes-from">Where configuration comes from<a class="anchor" href="#where-configuration-comes-from" aria-label="Link to this section">#</a></h2>

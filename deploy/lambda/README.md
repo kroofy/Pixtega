@@ -168,7 +168,22 @@ aws lambda add-permission \
   --function-url-auth-type NONE \
   --statement-id public-url \
   --region "$AWS_REGION"
+
+aws lambda add-permission \
+  --function-name pixtega \
+  --action lambda:InvokeFunction \
+  --principal '*' \
+  --invoked-via-function-url \
+  --statement-id public-url-invoke \
+  --region "$AWS_REGION"
 ```
+
+A CLI-created `NONE`-auth Function URL needs both resource-policy
+statements — `lambda:InvokeFunctionUrl` *and* `lambda:InvokeFunction` —
+or unsigned requests are rejected with 403 (see the
+[Function URL auth docs](https://docs.aws.amazon.com/lambda/latest/dg/urls-auth.html)).
+`--invoked-via-function-url` scopes the `InvokeFunction` grant to Function
+URL calls only, so it does not open direct invocation from anywhere else.
 
 ### Production exposure
 
@@ -182,8 +197,9 @@ Put CloudFront in front of it:
 - Lock the origin to CloudFront: switch the Function URL to
   `--auth-type AWS_IAM` and attach a CloudFront Origin Access Control
   (OAC) for Lambda Function URLs, so only the distribution can invoke the
-  function. Then remove the public `NONE` permission added above
-  (`aws lambda remove-permission --function-name pixtega --statement-id public-url`).
+  function. Then remove both public `NONE` permissions added above
+  (`aws lambda remove-permission --function-name pixtega --statement-id public-url`,
+  then again with `--statement-id public-url-invoke`).
 - Without OAC, at minimum keep the raw Function URL secret and monitor
   invocations — but IAM auth + OAC is the supported way to prevent
   callers from bypassing the CDN (and its cache) entirely.

@@ -167,8 +167,10 @@ Source: https://pixtega.com/docs/configuration.html
 ## Configuration
 
 Pixtega is configured with a single TOML document. The schema is closed: an
-unknown field stops startup, as does any invalid value. There are no silent
-defaults for limits — what you configure is what runs.
+unknown field stops startup, as does any invalid value. What you configure
+is what runs; the few optional keys fall back to documented defaults
+(`request_timeout_ms`, for example, defaults to 9000 when omitted — the
+deadline is never silently disabled).
 
 ### Where configuration comes from
 
@@ -513,8 +515,12 @@ aws lambda create-function-url-config --function-name pixtega \
 curl -o out.webp "${FUNCTION_URL}images/fixtures/photos/example.jpg/w640.webp"
 ```
 
-The complete walkthrough — ECR login, IAM policies, permissions for the
-public URL, and the smoke test — lives in the repository at
+A CLI-created `NONE`-auth Function URL also needs two resource-policy
+statements before unsigned requests stop 403ing: `lambda:InvokeFunctionUrl`
+*and* `lambda:InvokeFunction` (scoped with `--invoked-via-function-url`).
+
+The complete walkthrough — ECR login, IAM policies, both `add-permission`
+commands for the public URL, and the smoke test — lives in the repository at
 https://github.com/kroofy/Pixtega/blob/main/deploy/lambda/README.md, with a
 ready-made example-config.toml
 (https://github.com/kroofy/Pixtega/blob/main/deploy/lambda/example-config.toml).
