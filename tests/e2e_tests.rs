@@ -444,6 +444,7 @@ const NOT_FOUND_TTL: u64 = 66;
 struct ConfigOptions {
     max_download_bytes: u64,
     download_timeout_ms: u64,
+    request_timeout_ms: u64,
     max_concurrent_derivations: usize,
 }
 
@@ -452,6 +453,7 @@ impl Default for ConfigOptions {
         ConfigOptions {
             max_download_bytes: 10 * 1024 * 1024,
             download_timeout_ms: 10_000,
+            request_timeout_ms: 30_000,
             max_concurrent_derivations: 8,
         }
     }
@@ -468,6 +470,7 @@ allowed_widths = [320, 640, 1280]
 max_download_bytes = {max_download_bytes}
 max_source_megapixels = 100
 download_timeout_ms = {download_timeout_ms}
+request_timeout_ms = {request_timeout_ms}
 max_redirects = 3
 max_concurrent_derivations = {max_concurrent_derivations}
 unversioned_success_ttl_seconds = {UNVERSIONED_TTL}
@@ -489,6 +492,7 @@ allowed_qualities = [70, 92]
 "#,
         max_download_bytes = options.max_download_bytes,
         download_timeout_ms = options.download_timeout_ms,
+        request_timeout_ms = options.request_timeout_ms,
         max_concurrent_derivations = options.max_concurrent_derivations,
     )
 }

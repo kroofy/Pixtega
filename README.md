@@ -96,7 +96,7 @@ Errors are JSON: `{ "error": "message" }`.
 | 405 | method other than GET or HEAD |
 | 500 | flatten/encode failed after a valid source was accepted |
 | 502 | Source answered without a usable object: permission denied, unexpected upstream status, oversized content, undecodable or unsupported image bytes |
-| 504 | fetching the Source timed out |
+| 504 | fetching the Source timed out, or the whole request exceeded `request_timeout_ms` |
 
 Permission denial is always 502, never 404, so a misconfigured bucket
 cannot be cached as "missing".
@@ -116,11 +116,24 @@ Key limits:
 | `allowed_widths` | each in 1..=16384 | the closed Width Allowlist |
 | `max_download_bytes` | 1..=104857600 | source size cap, enforced on the advertised length and again while streaming |
 | `max_source_megapixels` | 1..=500 | decode bomb guard, checked from header metadata before decoding |
-| `download_timeout_ms` | 1..=60000 | one timeout over the whole source exchange |
+| `download_timeout_ms` | 1..=60000 | one timeout over the whole source exchange; never larger than `request_timeout_ms` |
+| `request_timeout_ms` | 1..=300000 | whole-request deadline (optional, default 9000); permit wait, fetch, and processing spend from this one budget |
 | `max_redirects` | 0..=10 | HTTP(S) redirect bound (same origin, same base path only) |
 | `max_concurrent_derivations` | 1..=64 | process-wide fetch+process permits |
 | `unversioned_success_ttl_seconds` | 1..=86400 | cache lifetime without `v` |
 | `not_found_ttl_seconds` | 1..=3600 | cache lifetime of 404s |
+
+`request_timeout_ms` is the deadline for answering one request: waiting for
+a `max_concurrent_derivations` permit, the source fetch (bounded by
+`download_timeout_ms`, which must not exceed it), and decode/resize/encode
+all spend from the same budget, and expiry is a real 504 with
+`Cache-Control: no-store` — a request queued behind slow derivations can
+therefore time out before its fetch or processing even starts. Keep the
+deadline below any host kill deadline
+(for example an AWS Lambda function timeout), so the service answers before
+the host tears the response down mid-stream. A timed-out encode cannot be
+cancelled: it keeps occupying its `max_concurrent_derivations` slot until
+libvips returns.
 
 `version_token` (optional, default `"accept"`) decides what the `v` query
 parameter means; the value set is closed and anything else stops startup:

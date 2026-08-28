@@ -33,6 +33,14 @@ SCORE_FILE = pathlib.Path("mutants-score.json")
 
 
 def count_lines(name: str) -> int:
+    """Count non-empty lines in a mutants.out/ result file.
+
+    Args:
+        name: Filename relative to mutants.out/ (e.g., "caught.txt").
+
+    Returns:
+        Number of non-empty lines, or 0 if the file does not exist.
+    """
     path = OUT_DIR / name
     if not path.exists():
         return 0
@@ -40,6 +48,12 @@ def count_lines(name: str) -> int:
 
 
 def git_sha() -> str:
+    """Get the current git commit SHA.
+
+    Returns:
+        Git commit SHA from GITHUB_SHA environment variable if running in
+        GitHub Actions, otherwise from `git rev-parse HEAD`.
+    """
     sha = os.environ.get("GITHUB_SHA")
     if sha:
         return sha
@@ -49,6 +63,15 @@ def git_sha() -> str:
 
 
 def main() -> int:
+    """Score a cargo-mutants run against the project threshold.
+
+    Reads mutants.out/ results, computes the mutation score, writes
+    mutants-score.json, appends a summary to GITHUB_STEP_SUMMARY if in
+    Actions, and exits non-zero if the score is below the threshold.
+
+    Returns:
+        0 if the score meets or exceeds the threshold, 1 otherwise.
+    """
     if not OUT_DIR.is_dir():
         print(f"error: {OUT_DIR}/ not found; did cargo mutants run?", file=sys.stderr)
         return 1

@@ -21,6 +21,7 @@ const TOP_FIELDS: &[(&str, &str)] = &[
     ("max_download_bytes", "1000000"),
     ("max_source_megapixels", "10"),
     ("download_timeout_ms", "1000"),
+    ("request_timeout_ms", "60000"),
     ("max_redirects", "2"),
     ("max_concurrent_derivations", "4"),
     ("unversioned_success_ttl_seconds", "60"),
@@ -130,6 +131,8 @@ fn example_configuration_parses_via_load_from_file() {
     assert_eq!(config.listen_address.port(), 8080);
     assert_eq!(config.path_prefix, "/images");
     assert_eq!(config.allowed_widths, vec![320, 640, 1280, 1920]);
+    assert_eq!(config.download_timeout_ms, 10_000);
+    assert_eq!(config.request_timeout_ms, 30_000);
     assert_eq!(config.version_token, VersionTokenMode::Accept);
     assert_eq!(config.sources.len(), 3);
 
@@ -192,6 +195,7 @@ fn boundary_numeric_values_are_accepted() {
         ("max_download_bytes", &["1", "104857600"]),
         ("max_source_megapixels", &["1", "500"]),
         ("download_timeout_ms", &["1", "60000"]),
+        ("request_timeout_ms", &["300000"]),
         ("max_redirects", &["0", "10"]),
         ("max_concurrent_derivations", &["1", "64"]),
         ("unversioned_success_ttl_seconds", &["1", "86400"]),
@@ -211,8 +215,10 @@ fn boundary_numeric_values_are_accepted() {
 
 #[test]
 fn missing_required_top_level_fields_are_rejected() {
-    // Every top-level field except path_prefix is required.
-    for (field, _) in TOP_FIELDS.iter().filter(|(f, _)| *f != "path_prefix") {
+    // Every top-level field except path_prefix and request_timeout_ms
+    // (which default) is required.
+    let optional = ["path_prefix", "request_timeout_ms"];
+    for (field, _) in TOP_FIELDS.iter().filter(|(f, _)| !optional.contains(f)) {
         let toml = config_with(&[(field, "<omit>")], FORMATS, SOURCES);
         assert_rejected(&toml, field);
     }
@@ -269,6 +275,7 @@ fn out_of_range_limits_timeouts_and_ttls_are_rejected() {
         ("max_download_bytes", &["0", "-1", "104857601"]),
         ("max_source_megapixels", &["0", "501"]),
         ("download_timeout_ms", &["0", "60001"]),
+        ("request_timeout_ms", &["0", "300001"]),
         ("max_redirects", &["-1", "11"]),
         ("max_concurrent_derivations", &["0", "65"]),
         ("unversioned_success_ttl_seconds", &["0", "86401"]),
@@ -280,6 +287,63 @@ fn out_of_range_limits_timeouts_and_ttls_are_rejected() {
             assert_rejected(&toml, field);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// request_timeout_ms: the whole-request budget the download timeout nests in.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn request_timeout_ms_defaults_to_9000_when_omitted() {
+    let toml = config_with(&[("request_timeout_ms", "<omit>")], FORMATS, SOURCES);
+    let config = load(&toml).expect("omitted request_timeout_ms must default");
+    assert_eq!(config.request_timeout_ms, 9_000);
+}
+
+#[test]
+fn request_timeout_ms_may_equal_download_timeout_ms_at_the_minimum() {
+    let toml = config_with(
+        &[("download_timeout_ms", "1"), ("request_timeout_ms", "1")],
+        FORMATS,
+        SOURCES,
+    );
+    let config = load(&toml).expect("request budget equal to the download timeout is valid");
+    assert_eq!(config.request_timeout_ms, 1);
+}
+
+#[test]
+fn download_timeout_exceeding_the_request_budget_is_rejected() {
+    let toml = config_with(
+        &[
+            ("download_timeout_ms", "2000"),
+            ("request_timeout_ms", "1999"),
+        ],
+        FORMATS,
+        SOURCES,
+    );
+    let err = load(&toml).expect_err("a fetch allowed to outlast the request must be rejected");
+    let message = err.to_string();
+    assert!(message.contains("download_timeout_ms"), "{message:?}");
+    assert!(message.contains("request_timeout_ms"), "{message:?}");
+}
+
+/// The nesting rule also holds against the default: a large
+/// `download_timeout_ms` with `request_timeout_ms` omitted is a startup
+/// error whose message names the key to set.
+#[test]
+fn download_timeout_exceeding_the_default_request_budget_is_rejected() {
+    let toml = config_with(
+        &[
+            ("download_timeout_ms", "10000"),
+            ("request_timeout_ms", "<omit>"),
+        ],
+        FORMATS,
+        SOURCES,
+    );
+    let err = load(&toml).expect_err("download timeout above the defaulted budget must reject");
+    let message = err.to_string();
+    assert!(message.contains("request_timeout_ms"), "{message:?}");
+    assert!(message.contains("9000"), "{message:?}");
 }
 
 #[test]

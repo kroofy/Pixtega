@@ -41,6 +41,7 @@ fn config_with_formats(formats: BTreeMap<OutputFormat, FormatPolicy>) -> AppConf
         max_download_bytes: 52_428_800,
         max_source_megapixels: 100,
         download_timeout_ms: 10_000,
+        request_timeout_ms: 30_000,
         max_redirects: 3,
         max_concurrent_derivations: 8,
         unversioned_success_ttl_seconds: 3600,
