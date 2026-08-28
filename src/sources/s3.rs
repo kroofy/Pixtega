@@ -10,6 +10,8 @@
 //! both checked against the byte limit.
 
 use async_trait::async_trait;
+use aws_sdk_s3::config::interceptors::InterceptorContext;
+use aws_sdk_s3::config::retry::{ClassifyRetry, RetryAction, RetryConfig};
 use aws_sdk_s3::error::{ProvideErrorMetadata, SdkError};
 use aws_sdk_s3::operation::get_object::GetObjectError;
 
@@ -17,6 +19,32 @@ use crate::config::S3SourceConfig;
 use crate::errors::{ConfigError, SourceError};
 use crate::sources::{FetchLimits, Source};
 use crate::types::{FetchedObject, UpstreamKey};
+
+/// Retry `DispatchFailure` that never got an HTTP response, except
+/// timeouts. Service errors stay one-shot: a 403 is still a 403.
+///
+/// `RetryForbidden` on every other failure overrides the SDK's default
+/// classifiers (5xx, modeled retryable codes) if they are still installed.
+#[derive(Debug, Default)]
+struct TransportRetryClassifier;
+
+impl ClassifyRetry for TransportRetryClassifier {
+    fn classify_retry(&self, ctx: &InterceptorContext) -> RetryAction {
+        let Some(Err(error)) = ctx.output_or_error() else {
+            return RetryAction::NoActionIndicated;
+        };
+        if let Some(connector) = error.as_connector_error() {
+            if !connector.is_timeout() {
+                return RetryAction::transient_error();
+            }
+        }
+        RetryAction::RetryForbidden
+    }
+
+    fn name(&self) -> &'static str {
+        "s3 transport-only"
+    }
+}
 
 pub struct S3Source {
     client: aws_sdk_s3::Client,
@@ -42,10 +70,12 @@ impl S3Source {
         let s3_config = aws_sdk_s3::config::Builder::from(&shared_config)
             .force_path_style(config.force_path_style)
             .timeout_config(timeout_config)
-            // One attempt per fetch: the adapter's own timeout bounds the
-            // whole exchange, and retrying inside it would only burn the
-            // budget without changing the mapped outcome.
-            .retry_config(aws_sdk_s3::config::retry::RetryConfig::disabled())
+            // Standard retry machinery (attempts, backoff) with a
+            // transport-only classifier. Service errors stay one-shot.
+            // `operation_timeout` already includes retries; `Source::fetch`
+            // wraps the same budget again.
+            .retry_config(RetryConfig::standard())
+            .retry_classifier(TransportRetryClassifier)
             .build();
 
         Ok(S3Source {
@@ -155,5 +185,61 @@ fn map_sdk_error(err: SdkError<GetObjectError>) -> SourceError {
             upstream_status: None,
             detail: "s3 request failed".to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aws_smithy_runtime_api::client::interceptors::context::{Error, Input, InterceptorContext};
+    use aws_smithy_runtime_api::client::orchestrator::OrchestratorError;
+    use aws_smithy_runtime_api::client::result::ConnectorError;
+
+    #[derive(Debug)]
+    struct ServiceBoom;
+
+    impl std::fmt::Display for ServiceBoom {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("service boom")
+        }
+    }
+
+    impl std::error::Error for ServiceBoom {}
+
+    fn classify(error: OrchestratorError<Error>) -> RetryAction {
+        let mut ctx = InterceptorContext::new(Input::doesnt_matter());
+        ctx.set_output_or_error(Err(error));
+        TransportRetryClassifier.classify_retry(&ctx)
+    }
+
+    #[test]
+    fn dispatch_failure_is_retryable() {
+        let action = classify(OrchestratorError::connector(ConnectorError::io(
+            "connection reset".into(),
+        )));
+        assert_eq!(action, RetryAction::transient_error());
+    }
+
+    #[test]
+    fn dispatch_timeout_is_not_retryable() {
+        let action = classify(OrchestratorError::connector(ConnectorError::timeout(
+            "connect timed out".into(),
+        )));
+        assert_eq!(action, RetryAction::RetryForbidden);
+    }
+
+    #[test]
+    fn service_error_is_not_retryable() {
+        let action = classify(OrchestratorError::operation(Error::erase(ServiceBoom)));
+        assert_eq!(action, RetryAction::RetryForbidden);
+    }
+
+    #[test]
+    fn empty_context_does_not_retry() {
+        let ctx = InterceptorContext::new(Input::doesnt_matter());
+        assert_eq!(
+            TransportRetryClassifier.classify_retry(&ctx),
+            RetryAction::NoActionIndicated
+        );
     }
 }

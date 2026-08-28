@@ -172,6 +172,14 @@ impl SourceError {
         }
     }
 
+    /// Internal diagnostic for logs. Never part of the public JSON body.
+    pub fn detail(&self) -> Option<&str> {
+        match self {
+            SourceError::Unavailable { detail, .. } if !detail.is_empty() => Some(detail),
+            _ => None,
+        }
+    }
+
     /// Stable public message. Never contains upstream response bodies,
     /// credentials, or URLs.
     pub fn public_message(&self) -> &'static str {

@@ -145,6 +145,17 @@ fn completion_events(guard: &ChildGuard) -> Vec<serde_json::Value> {
         .collect()
 }
 
+fn source_error_events(guard: &ChildGuard) -> Vec<serde_json::Value> {
+    guard
+        .stdout_lines
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|v| v.get("event").and_then(|e| e.as_str()) == Some("source_error"))
+        .collect()
+}
+
 /// Poll until at least `count` completion events were logged. The event is
 /// emitted before the response is written, but the pipe reader may lag.
 async fn wait_for_completions(guard: &ChildGuard, count: usize) -> Vec<serde_json::Value> {
@@ -653,10 +664,25 @@ async fn e2e_denied_source_returns_a_non_cacheable_502() {
     .await;
     assert_eq!(response.status, 502, "denial is 502, never 404");
     assert_eq!(response.header("cache-control"), Some("no-store"));
+    let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    assert_eq!(body["error"], "source unavailable");
+    assert!(
+        body.get("detail").is_none(),
+        "detail must not reach the client body: {body}"
+    );
     let events = wait_for_completions(&service, 1).await;
     assert_completion_shape(&events[0]);
     assert_eq!(events[0]["outcome"], "source_unavailable");
     assert_eq!(events[0]["upstream_status"], 403);
+    assert!(events[0].get("detail").is_none());
+    let warns = source_error_events(&service);
+    assert_eq!(
+        warns.len(),
+        1,
+        "expected one source_error warn, got {warns:?}"
+    );
+    assert_eq!(warns[0]["level"], "warn");
+    assert_eq!(warns[0]["detail"], "unexpected upstream status");
 }
 
 #[tokio::test]

@@ -52,6 +52,8 @@ enum Script {
     BytesThenStall(Vec<u8>),
     /// Read the request, never respond.
     Stall,
+    /// Read the request, then close with no HTTP response.
+    Hangup,
     /// 200 with chunked transfer encoding and no Content-Length.
     ChunkedHuge { total: usize },
 }
@@ -63,11 +65,19 @@ struct FakeS3 {
 
 impl FakeS3 {
     async fn start(routes: HashMap<String, Script>) -> FakeS3 {
+        let queued = routes
+            .into_iter()
+            .map(|(path, script)| (path, vec![script]))
+            .collect();
+        Self::start_sequence(queued).await
+    }
+
+    async fn start_sequence(routes: HashMap<String, Vec<Script>>) -> FakeS3 {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let requests: Arc<Mutex<Vec<Recorded>>> = Arc::new(Mutex::new(Vec::new()));
         let recorded = requests.clone();
-        let routes = Arc::new(routes);
+        let routes: Arc<Mutex<HashMap<String, Vec<Script>>>> = Arc::new(Mutex::new(routes));
         tokio::spawn(async move {
             loop {
                 let Ok((mut stream, _)) = listener.accept().await else {
@@ -79,7 +89,16 @@ impl FakeS3 {
                     let Some(request) = read_request(&mut stream).await else {
                         return;
                     };
-                    let script = routes.get(&request.path).cloned();
+                    let script = {
+                        let mut routes = routes.lock().unwrap();
+                        routes.get_mut(&request.path).and_then(|queue| {
+                            if queue.is_empty() {
+                                None
+                            } else {
+                                Some(queue.remove(0))
+                            }
+                        })
+                    };
                     recorded.lock().unwrap().push(request);
                     match script {
                         Some(Script::Bytes(bytes)) => {
@@ -91,6 +110,9 @@ impl FakeS3 {
                         }
                         Some(Script::Stall) => {
                             tokio::time::sleep(Duration::from_secs(60)).await;
+                        }
+                        Some(Script::Hangup) => {
+                            return;
                         }
                         Some(Script::ChunkedHuge { total }) => {
                             let head = b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
@@ -352,6 +374,7 @@ async fn access_denied_maps_to_unavailable_and_never_not_found() {
         ),
         "expected Unavailable with status 403, got {err:?}"
     );
+    assert_eq!(fake.recorded().len(), 1, "a 403 must not be retried");
 }
 
 #[tokio::test]
@@ -378,6 +401,32 @@ async fn other_service_errors_map_to_unavailable() {
         ),
         "expected Unavailable with status 500, got {err:?}"
     );
+    assert_eq!(
+        fake.recorded().len(),
+        1,
+        "a service error must not be retried"
+    );
+}
+
+/// A connection that closes with no HTTP response is a DispatchFailure.
+/// The transport-only classifier retries it; the second attempt serves
+/// the object. Service errors (above) stay one-shot.
+#[tokio::test]
+async fn dispatch_failure_is_retried_and_then_succeeds() {
+    let path = format!("/{BUCKET}/flaky.jpg");
+    let fake = FakeS3::start_sequence(HashMap::from([(
+        path,
+        vec![Script::Hangup, Script::Bytes(object_response(b"recovered"))],
+    )]))
+    .await;
+
+    let source = adapter(&fake, default_limits()).await;
+    let fetched = source
+        .fetch(&key(&["flaky.jpg"]))
+        .await
+        .expect("transport retry must recover");
+    assert_eq!(fetched.bytes, b"recovered");
+    assert_eq!(fake.recorded().len(), 2);
 }
 
 #[tokio::test]
