@@ -2,7 +2,8 @@
 //!
 //! One completion event per request. Fields are stable and low-cardinality;
 //! response bodies, credentials, and the source-version query value are
-//! never logged.
+//! never logged. Source failures with an internal `detail` emit a separate
+//! warn event immediately before the completion line.
 
 use serde::Serialize;
 
@@ -47,10 +48,54 @@ impl CompletionEvent {
 
     /// Write the event as one JSON line to standard output.
     pub fn emit(&self) {
-        // serde_json can only fail here on non-string map keys; this struct
-        // has none, so a failure is unreachable.
-        if let Ok(line) = serde_json::to_string(self) {
-            println!("{line}");
+        emit_json(self);
+    }
+}
+
+/// Warn-level diagnostic for a source failure. Carries the adapter `detail`
+/// string (already log-safe: no URLs, credentials, or response bodies).
+/// Kept off [`CompletionEvent`] so that event's field set stays closed
+/// and low-cardinality.
+#[derive(Debug, Serialize)]
+pub struct SourceErrorEvent {
+    pub event: &'static str,
+    pub level: &'static str,
+    pub detail: String,
+}
+
+impl SourceErrorEvent {
+    pub fn new(detail: impl Into<String>) -> Self {
+        SourceErrorEvent {
+            event: "source_error",
+            level: "warn",
+            detail: detail.into(),
         }
+    }
+
+    pub fn emit(&self) {
+        emit_json(self);
+    }
+}
+
+fn emit_json<T: Serialize>(value: &T) {
+    // serde_json can only fail here on non-string map keys; these structs
+    // have none, so a failure is unreachable.
+    if let Ok(line) = serde_json::to_string(value) {
+        println!("{line}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::errors::Outcome;
+
+    #[test]
+    fn completion_event_does_not_grow_a_detail_field() {
+        let event = CompletionEvent::new(502, Outcome::SourceUnavailable, 12);
+        let json = serde_json::to_value(&event).unwrap();
+        assert!(json.get("detail").is_none());
+        assert_eq!(json["event"], "request_completed");
+        assert_eq!(json["outcome"], "source_unavailable");
     }
 }

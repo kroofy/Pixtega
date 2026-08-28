@@ -473,8 +473,13 @@ async fn permission_denial_is_a_502_and_cannot_be_mistaken_for_absence() {
     assert_no_store(&response);
     assert_error_body(&response);
     assert_security_headers(&response);
+    let body = String::from_utf8_lossy(&response.body);
     // The upstream body must never leak into the client-facing error.
-    assert!(!String::from_utf8_lossy(&response.body).contains("secret denial page"));
+    assert!(!body.contains("secret denial page"));
+    assert!(
+        !body.contains("unexpected upstream status"),
+        "adapter detail must not reach the JSON body: {body}"
+    );
 }
 
 #[tokio::test]

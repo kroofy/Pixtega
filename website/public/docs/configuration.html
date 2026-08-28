@@ -216,7 +216,9 @@ region = "us-east-1"</code></pre>
     <p>
       Requires <code>bucket</code> and <code>region</code>; optional
       <code>endpoint_url</code> and <code>force_path_style</code> support local
-      S3-compatible servers.
+      S3-compatible servers. Transport failures that never received an HTTP
+      response are retried inside <code>download_timeout_ms</code>; a 403 or
+      other service error is not.
     </p>
 
     <h2 id="s3-credentials">S3 credentials and permissions<a class="anchor" href="#s3-credentials" aria-label="Link to this section">#</a></h2>

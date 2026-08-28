@@ -14,7 +14,7 @@ use tokio::sync::Semaphore;
 
 use crate::config::AppConfig;
 use crate::errors::{Outcome, ProcessError, RequestError};
-use crate::logging::CompletionEvent;
+use crate::logging::{CompletionEvent, SourceErrorEvent};
 use crate::processor;
 use crate::request::parse_request;
 use crate::sources::SourceRegistry;
@@ -235,6 +235,9 @@ async fn respond(state: &AppState, method: &Method, uri: &Uri) -> (Response, Rep
             Ok(Err(err)) => {
                 report.outcome = err.outcome();
                 report.upstream_status = err.upstream_status();
+                if let Some(detail) = err.detail() {
+                    SourceErrorEvent::new(detail).emit();
+                }
                 let response =
                     error_response(state, taxonomy_status(err.status()), err.public_message());
                 return (response, report);

@@ -10,6 +10,8 @@
 //! both checked against the byte limit.
 
 use async_trait::async_trait;
+use aws_sdk_s3::config::interceptors::InterceptorContext;
+use aws_sdk_s3::config::retry::{ClassifyRetry, RetryAction, RetryConfig};
 use aws_sdk_s3::error::{ProvideErrorMetadata, SdkError};
 use aws_sdk_s3::operation::get_object::GetObjectError;
 
@@ -17,6 +19,32 @@ use crate::config::S3SourceConfig;
 use crate::errors::{ConfigError, SourceError};
 use crate::sources::{FetchLimits, Source};
 use crate::types::{FetchedObject, UpstreamKey};
+
+/// Retry `DispatchFailure` that never got an HTTP response, except
+/// timeouts. Service errors stay one-shot: a 403 is still a 403.
+///
+/// `RetryForbidden` on every other failure overrides the SDK's default
+/// classifiers (5xx, modeled retryable codes) if they are still installed.
+#[derive(Debug, Default)]
+struct TransportRetryClassifier;
+
+impl ClassifyRetry for TransportRetryClassifier {
+    fn classify_retry(&self, ctx: &InterceptorContext) -> RetryAction {
+        let Some(Err(error)) = ctx.output_or_error() else {
+            return RetryAction::NoActionIndicated;
+        };
+        if let Some(connector) = error.as_connector_error() {
+            if !connector.is_timeout() {
+                return RetryAction::transient_error();
+            }
+        }
+        RetryAction::RetryForbidden
+    }
+
+    fn name(&self) -> &'static str {
+        "s3 transport-only"
+    }
+}
 
 pub struct S3Source {
     client: aws_sdk_s3::Client,
@@ -42,10 +70,12 @@ impl S3Source {
         let s3_config = aws_sdk_s3::config::Builder::from(&shared_config)
             .force_path_style(config.force_path_style)
             .timeout_config(timeout_config)
-            // One attempt per fetch: the adapter's own timeout bounds the
-            // whole exchange, and retrying inside it would only burn the
-            // budget without changing the mapped outcome.
-            .retry_config(aws_sdk_s3::config::retry::RetryConfig::disabled())
+            // Standard retry machinery (attempts, backoff) with a
+            // transport-only classifier. Service errors stay one-shot.
+            // `operation_timeout` already includes retries; `Source::fetch`
+            // wraps the same budget again.
+            .retry_config(RetryConfig::standard())
+            .retry_classifier(TransportRetryClassifier)
             .build();
 
         Ok(S3Source {

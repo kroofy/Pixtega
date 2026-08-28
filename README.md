@@ -168,7 +168,10 @@ base_url = "https://images.example.test"
 - `filesystem`: `root`, resolved relative to the config file and
   canonicalized at startup. Symlinks below the root are always rejected.
 - `s3`: `bucket` and `region`, plus optional `endpoint_url` and
-  `force_path_style` for local S3-compatible servers.
+  `force_path_style` for local S3-compatible servers. Transport failures
+  that never got an HTTP response (stale connection, DNS, TLS reset) are
+  retried inside `download_timeout_ms`; service errors (403, 404, 5xx)
+  stay one attempt.
 
 ### Pinning sources to trusted origins
 
@@ -274,8 +277,12 @@ stable outcome from a closed set (`success`, `rejected_request`,
 `not_found`, `timeout`, `source_too_large`, `source_unavailable`,
 `undecodable_source`, `flatten_failed`, `encode_failed`),
 mount, output width/format, upstream status, byte counts, and elapsed
-milliseconds. Response bodies, credentials, and `v` values are never
-logged.
+milliseconds. When a source failure carries an internal `detail` (for
+example `s3 dispatch failure` vs `s3 service error: AccessDenied`), a
+separate `{"event":"source_error","level":"warn","detail":"..."}` line is
+emitted immediately before `request_completed`. `detail` is for logs only
+and never appears in the client JSON body. Response bodies, credentials,
+and `v` values are never logged.
 
 ## Development
 

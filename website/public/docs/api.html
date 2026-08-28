@@ -148,6 +148,11 @@
       <code>undecodable_source</code>,
       <code>flatten_failed</code>, <code>encode_failed</code>), mount, output
       width/format, upstream status, byte counts, and elapsed milliseconds.
+      A source failure with an internal <code>detail</code> (S3 dispatch vs
+      service error, HTTP connect vs unexpected status) also emits a
+      separate <code>{"event":"source_error","level":"warn","detail":"..."}</code>
+      line immediately before <code>request_completed</code>.
+      <code>detail</code> never appears in the client JSON body.
       Response bodies, credentials, and <code>v</code> values are never
       logged.
     </p>

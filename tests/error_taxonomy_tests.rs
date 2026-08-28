@@ -140,6 +140,24 @@ fn process_error_public_messages_are_the_documented_strings() {
     }
 }
 
+#[test]
+fn source_error_detail_is_for_logs_only() {
+    let err = SourceError::Unavailable {
+        upstream_status: None,
+        detail: "s3 dispatch failure".to_string(),
+    };
+    assert_eq!(err.public_message(), "source unavailable");
+    assert!(
+        !err.public_message().contains("dispatch"),
+        "public message must not carry detail"
+    );
+
+    let absent = SourceError::NotFound {
+        upstream_status: Some(404),
+    };
+    assert_eq!(absent.detail(), None);
+}
+
 /// `Display` renders exactly the stable public message, never internal
 /// detail (which could leak) and never an empty string.
 #[test]
