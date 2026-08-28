@@ -49,6 +49,17 @@ CONCURRENCY = 4
 
 
 def fetch(path):
+    """Fetch a URL from the benchmark server and measure latency.
+
+    Args:
+        path: URL path relative to BASE (e.g., "/images/fs/small.jpg/w320.webp").
+
+    Returns:
+        Tuple of (elapsed_seconds, body_length_bytes).
+
+    Raises:
+        RuntimeError: If the response status is not 200.
+    """
     start = time.perf_counter()
     with urllib.request.urlopen(BASE + path) as resp:
         body = resp.read()
@@ -60,6 +71,14 @@ def fetch(path):
 
 
 def read_proc_status(pid):
+    """Read memory usage fields from /proc/{pid}/status.
+
+    Args:
+        pid: Process ID.
+
+    Returns:
+        Dict with VmHWM (peak RSS) and VmRSS (current RSS) in kB.
+    """
     fields = {}
     with open(f"/proc/{pid}/status") as f:
         for line in f:
@@ -70,6 +89,17 @@ def read_proc_status(pid):
 
 
 def start_server(binary):
+    """Start a pixtega server process and wait for it to be ready.
+
+    Args:
+        binary: Path to the pixtega executable.
+
+    Returns:
+        The running Popen process.
+
+    Raises:
+        RuntimeError: If the server exits or does not report listening within 15s.
+    """
     proc = subprocess.Popen(
         [binary, CONFIG],
         stdout=subprocess.PIPE,
@@ -92,6 +122,21 @@ def start_server(binary):
 
 
 def run_scenario(binary, name, path, seq_n, conc_n):
+    """Run a single benchmark scenario with sequential and concurrent phases.
+
+    Args:
+        binary: Path to the pixtega executable.
+        name: Scenario name for reporting.
+        path: URL path to benchmark.
+        seq_n: Number of sequential requests for latency measurement.
+        conc_n: Number of concurrent requests for throughput measurement.
+
+    Returns:
+        Dict with scenario name, latency stats, throughput, memory usage, and body size.
+
+    Raises:
+        RuntimeError: If concurrent requests fail.
+    """
     proc = start_server(binary)
     try:
         for _ in range(3):  # warmup
@@ -110,6 +155,7 @@ def run_scenario(binary, name, path, seq_n, conc_n):
         remaining = [conc_n]
 
         def worker():
+            """Thread worker that fetches the URL until the request quota is exhausted."""
             while True:
                 with lock:
                     if remaining[0] <= 0:
@@ -151,6 +197,11 @@ def run_scenario(binary, name, path, seq_n, conc_n):
 
 
 def cmd_run(args):
+    """Run all benchmark scenarios and write results to a JSON file.
+
+    Args:
+        args: Parsed arguments with `binary` and `label` attributes.
+    """
     fixture_server = subprocess.Popen(
         [sys.executable, "-m", "http.server", "8091", "-d", FIXTURES],
         stdout=subprocess.DEVNULL,
@@ -175,6 +226,11 @@ def cmd_run(args):
 
 
 def print_table(results):
+    """Print benchmark results as a formatted table.
+
+    Args:
+        results: List of scenario result dicts.
+    """
     header = f"{'scenario':32} {'mean ms':>9} {'p50 ms':>9} {'min ms':>9} {'rps@4':>7} {'peakRSS MB':>10} {'body B':>9}"
     print(header)
     print("-" * len(header))
@@ -187,6 +243,11 @@ def print_table(results):
 
 
 def cmd_compare(args):
+    """Compare two benchmark result files and print a delta table.
+
+    Args:
+        args: Parsed arguments with `a` and `b` file paths.
+    """
     with open(args.a) as f:
         a = {r["name"]: r for r in json.load(f)}
     with open(args.b) as f:
@@ -213,6 +274,7 @@ def cmd_compare(args):
 
 
 def main():
+    """Parse command-line arguments and dispatch to run or compare command."""
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
     run = sub.add_parser("run")
