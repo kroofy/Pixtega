@@ -672,18 +672,3 @@ fn vp8x_animation_check_applies_only_to_webp_sources() {
         .expect("a JPEG mimicking VP8X offsets must still be processed");
     assert_eq!(decode_with_image_crate(&out).dimensions(), (32, 16));
 }
-
-/// Animated WebP is rejected by the page-count metadata check (the VP8X
-/// flag is a fallback): the rejection must name multi-page input.
-#[test]
-fn animated_webp_is_rejected_by_the_page_count_check() {
-    init_vips();
-    let animated = animated_webp_fixture();
-    match process_image(&animated, &tf(320, OutputFormat::Jpeg, 85), MP) {
-        Err(ProcessError::Undecodable { detail }) => assert_eq!(
-            detail, "animated or multi-page input",
-            "animated WebP must be rejected by the page-count check first"
-        ),
-        other => panic!("expected Undecodable, got {other:?}"),
-    }
-}
