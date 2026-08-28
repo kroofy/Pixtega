@@ -245,11 +245,9 @@ async fn respond(state: &AppState, method: &Method, uri: &Uri) -> (Response, Rep
     report.input_bytes = Some(fetched.bytes.len() as u64);
 
     // Whatever the fetch left of the budget is what processing gets. A
-    // fetch that exhausted it means 504 without starting libvips at all.
-    if deadline
-        .checked_duration_since(tokio::time::Instant::now())
-        .is_none()
-    {
+    // fetch that exhausted it — a deadline in the past or exactly zero
+    // remaining — means 504 without starting libvips at all.
+    if deadline <= tokio::time::Instant::now() {
         return timeout_response(state, report);
     }
 
