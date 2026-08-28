@@ -126,9 +126,17 @@ aws lambda create-function \
 Notes:
 
 - `Dockerfile.lambda` already sets `AWS_LWA_READINESS_CHECK_PROTOCOL=tcp`
-  in the image, because the service has no HTTP health endpoint (`GET /`
-  is a 400 by design) — the adapter waits for the TCP socket instead of an
-  HTTP 200. If you override the image environment, keep that variable.
+  (the service has no HTTP health endpoint — `GET /` is a 400 by design —
+  so the adapter waits for the TCP socket instead of an HTTP 200) and
+  `AWS_LWA_INVOKE_MODE=response_stream` (to match the streaming Function
+  URL created below) in the image. If you override the image environment,
+  keep both variables. Exception: ALB does not support Lambda response
+  streaming — behind an ALB, set `AWS_LWA_INVOKE_MODE=buffered` instead.
+  API Gateway REST APIs stream only when the Lambda proxy integration sets
+  `responseTransferMode=STREAM` (with the `/response-streaming-invocations`
+  URI); with a default (buffered) integration, override to
+  `AWS_LWA_INVOKE_MODE=buffered` too. Same pairing rule: the adapter's
+  mode must match how the function is invoked.
 - Lambda CPU scales with memory. Image decode/resize/encode is CPU-bound;
   1024 MB is a reasonable floor, and larger widths or AVIF output benefit
   from more.
@@ -150,6 +158,7 @@ Notes:
 aws lambda create-function-url-config \
   --function-name pixtega \
   --auth-type NONE \
+  --invoke-mode RESPONSE_STREAM \
   --region "$AWS_REGION"
 
 aws lambda add-permission \
@@ -196,12 +205,22 @@ S3 mount, e.g. `${FUNCTION_URL}images/photos/cat.jpg/w1280.webp?v=1`.
 ## Caveats
 
 - **Function URL payload limit.** Buffered Function URL responses are
-  capped at about 6 MB. Derived images are usually far smaller, but large
-  widths at high JPEG qualities can exceed it. Options: enable response
-  streaming (`--invoke-mode RESPONSE_STREAM` on the Function URL and
-  `AWS_LWA_INVOKE_MODE=response_stream` in the function environment), which
-  raises the response limit substantially, or constrain `allowed_widths`
-  and `allowed_qualities` so oversized outputs cannot be produced.
+  capped at about 6 MB, and large widths at high JPEG qualities can exceed
+  it — so this image and this guide default to response streaming, which
+  raises the limit substantially: the image sets
+  `AWS_LWA_INVOKE_MODE=response_stream` and the Function URL above is
+  created with `--invoke-mode RESPONSE_STREAM`. The two must stay in sync;
+  if they disagree, responses come back as the adapter's buffered JSON
+  envelope instead of image bytes. To opt out and run buffered, change
+  both: create the Function URL as BUFFERED (omit `--invoke-mode` or set
+  it explicitly) *and* set `AWS_LWA_INVOKE_MODE=buffered` in the function
+  environment — then consider constraining `allowed_widths` and
+  `allowed_qualities` so outputs cannot exceed the 6 MB cap. The buffered
+  opt-out is mandatory behind an ALB (no streaming support), behind an
+  API Gateway integration that is not `responseTransferMode=STREAM` with a
+  `/response-streaming-invocations` integration URI, and where Function
+  URL response streaming itself is unavailable — VPC-attached functions
+  and some AWS Regions.
 - **Cold starts.** Each cold start loads libvips and validates
   configuration, including verifying every enabled encoder; the first
   request on a new execution environment is noticeably slower than warm

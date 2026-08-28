@@ -12,6 +12,13 @@
 #   - AWS_LWA_READINESS_CHECK_PROTOCOL=tcp: the service has no HTTP health
 #     endpoint (GET / is a 400 by design), so the adapter waits for the
 #     TCP socket instead of an HTTP 200.
+#   - AWS_LWA_INVOKE_MODE=response_stream: the Function URL is expected to
+#     use InvokeMode RESPONSE_STREAM (image bodies can exceed the ~6 MB
+#     buffered response cap), and the adapter's invoke mode must match the
+#     Function URL's — a mismatch returns the adapter's buffered JSON
+#     envelope instead of the image bytes. ALB cannot stream, and API
+#     Gateway streams only via a STREAM-mode REST proxy integration:
+#     otherwise override to AWS_LWA_INVOKE_MODE=buffered.
 #
 # The service must listen on the port the adapter forwards to (default
 # 8080), so configure: listen_address = "0.0.0.0:8080".
@@ -63,8 +70,10 @@ COPY fixtures ./fixtures
 USER pixtega
 EXPOSE 8080
 # The adapter forwards to 127.0.0.1:8080 by default (AWS_LWA_PORT); the
-# TCP readiness check avoids requiring an HTTP health endpoint.
-ENV AWS_LWA_READINESS_CHECK_PROTOCOL=tcp
+# TCP readiness check avoids requiring an HTTP health endpoint. The invoke
+# mode must match the Function URL's InvokeMode (RESPONSE_STREAM).
+ENV AWS_LWA_READINESS_CHECK_PROTOCOL=tcp \
+    AWS_LWA_INVOKE_MODE=response_stream
 
 ENTRYPOINT ["/usr/local/bin/pixtega"]
 # No default config: supply one via the CONFIG (inline TOML) or CONFIG_FILE
