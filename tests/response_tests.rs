@@ -649,26 +649,47 @@ async fn undecodable_source_bytes_are_a_non_cacheable_502() {
     assert_error_body(&response);
 }
 
-/// A real pipeline 500 (flatten/encode failing AFTER a valid source image
-/// was accepted) cannot be triggered through the HTTP surface without
-/// breaking the process, so the 502/500 split is asserted on the error
-/// taxonomy itself: invalid source bytes are 502 (verified over HTTP above),
-/// while pipeline failures carry 500.
-#[test]
-fn processing_taxonomy_distinguishes_source_bytes_from_pipeline_failures() {
-    let undecodable = ProcessError::Undecodable {
-        detail: "x".to_string(),
-    };
-    assert_eq!(undecodable.status(), 502);
-    for pipeline in [
-        ProcessError::Flatten {
-            detail: "x".to_string(),
-        },
-        ProcessError::Encode {
-            detail: "x".to_string(),
-        },
+/// Flatten/encode after a valid source is a non-cacheable 500. A real
+/// pipeline 500 cannot be triggered through the HTTP surface without
+/// breaking the process, so this uses the ProcessFn seam. The messages
+/// are the documented client contract; internal detail must not leak.
+#[tokio::test]
+async fn a_pipeline_failure_after_a_valid_source_is_a_non_cacheable_500() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("photo.jpg"), jpeg_fixture(64, 64)).unwrap();
+
+    for (error, message) in [
+        (
+            ProcessError::Flatten {
+                detail: "internal detail".to_string(),
+            },
+            "image flatten failed",
+        ),
+        (
+            ProcessError::Encode {
+                detail: "internal detail".to_string(),
+            },
+            "image encode failed",
+        ),
     ] {
-        assert_eq!(pipeline.status(), 500, "{pipeline:?}");
+        let config = test_config(vec![filesystem_source(dir.path())], 10_000);
+        let process: ProcessFn = {
+            let error = error.clone();
+            Arc::new(move |_bytes, _transform, _megapixels| Err(error.clone()))
+        };
+        let (addr, _state) = spawn_app_with_processor(config, process).await;
+
+        let response = send_request(addr, "GET", "/images/files/photo.jpg/w320.webp").await;
+        assert_eq!(response.status, 500, "{error:?}");
+        assert_no_store(&response);
+        assert_error_body(&response);
+        assert_security_headers(&response);
+        let parsed: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(parsed["error"], message);
+        assert!(
+            !String::from_utf8_lossy(&response.body).contains("internal detail"),
+            "{error:?} must not leak detail"
+        );
     }
 }
 
