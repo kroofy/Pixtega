@@ -138,9 +138,12 @@
       identity (S3 <code>ETag</code>/<code>VersionId</code>, HTTP
       <code>ETag</code>, or filesystem mtime+size+key). The tag combines
       that identity with the resolved transform. Weak upstream tags stay
-      weak. <code>If-None-Match</code> matching that tag is
+      weak; filesystem identity is always weak.
+      <code>If-None-Match</code> matching that tag is
       <code>304 Not Modified</code> with the same cache policy, no body,
-      and no source-body fetch or encode. There is no
+      and no source-body fetch or encode. Identify runs before a
+      derivation permit. A HEAD the origin refuses (other than timeout)
+      is ignored and the service fetches instead. There is no
       <code>Last-Modified</code>. Every response — success or error — also
       carries <code>X-Content-Type-Options: nosniff</code>,
       <code>Content-Security-Policy: default-src 'none'</code>, and

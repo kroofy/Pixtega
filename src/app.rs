@@ -13,8 +13,8 @@ use axum::response::Response;
 use tokio::sync::Semaphore;
 
 use crate::config::AppConfig;
-use crate::errors::{Outcome, ProcessError, RequestError};
-use crate::etag::derived_etag;
+use crate::errors::{Outcome, ProcessError, RequestError, SourceError};
+use crate::etag::{derived_etag, parse_if_none_match};
 use crate::logging::{CompletionEvent, SourceErrorEvent};
 use crate::processor;
 use crate::request::parse_request;
@@ -38,7 +38,8 @@ pub struct AppState {
     pub registry: SourceRegistry,
     /// Process-wide derivation permits: no more than
     /// `max_concurrent_derivations` Source Objects are fetched or processed
-    /// at once. Acquired before fetching; released only when the blocking
+    /// at once. Identify for a matching `If-None-Match` runs without a
+    /// permit. Acquired before fetching; released only when the blocking
     /// processing work actually finishes (libvips cannot be cancelled, so a
     /// timed-out derivation keeps occupying its slot until then).
     pub derivation_permits: Arc<Semaphore>,
@@ -223,6 +224,43 @@ async fn respond(
         return (response, report);
     };
 
+    // Conditional revalidation runs before the derivation permit so a
+    // matching If-None-Match can 304 while every slot is occupied by
+    // encode work. Identify errors other than timeout fall through: a
+    // WAF that 403s or 404s HEAD while GET works must not become the
+    // client answer. `*` and unparseable validators skip identify.
+    let if_none_match = if_none_match_tags(headers);
+    if !if_none_match.is_empty() {
+        match tokio::time::timeout_at(deadline, source.identify(&resolved.upstream_key)).await {
+            Ok(Ok(Some(identified))) => {
+                report.upstream_status = identified.upstream_status;
+                let etag = derived_etag(&identified.identity, &resolved.transform);
+                if etag.matches_any(&if_none_match) {
+                    return (
+                        not_modified_response(state, &resolved, &identified.identity),
+                        report,
+                    );
+                }
+            }
+            Ok(Ok(None)) => {}
+            Ok(Err(SourceError::Timeout)) => {
+                report.outcome = Outcome::Timeout;
+                let response = error_response(
+                    state,
+                    StatusCode::GATEWAY_TIMEOUT,
+                    SourceError::Timeout.public_message(),
+                );
+                return (response, report);
+            }
+            Ok(Err(err)) => {
+                if let Some(detail) = err.detail() {
+                    SourceErrorEvent::new(detail).emit();
+                }
+            }
+            Err(_elapsed) => return timeout_response(state, report),
+        }
+    }
+
     // One process-wide permit bounds fetching AND processing together. It
     // is owned so it can ride with the blocking work below and be released
     // only when that work truly finishes.
@@ -233,39 +271,6 @@ async fn respond(
             Ok(acquired) => acquired.expect("derivation semaphore is never closed"),
             Err(_elapsed) => return timeout_response(state, report),
         };
-
-    // Conditional revalidation: identify only when the caller sent a
-    // validator. A match is 304 with no fetch and no encode. Missing
-    // identity or a mismatch falls through to the existing fetch path.
-    if let Some(if_none_match) = headers
-        .get(header::IF_NONE_MATCH)
-        .and_then(|value| value.to_str().ok())
-    {
-        match tokio::time::timeout_at(deadline, source.identify(&resolved.upstream_key)).await {
-            Ok(Ok(Some(identified))) => {
-                report.upstream_status = identified.upstream_status;
-                let etag = derived_etag(&identified.identity, &resolved.transform);
-                if etag.matches_if_none_match(if_none_match) {
-                    return (
-                        not_modified_response(state, &resolved, &identified.identity),
-                        report,
-                    );
-                }
-            }
-            Ok(Ok(None)) => {}
-            Ok(Err(err)) => {
-                report.outcome = err.outcome();
-                report.upstream_status = err.upstream_status();
-                if let Some(detail) = err.detail() {
-                    SourceErrorEvent::new(detail).emit();
-                }
-                let response =
-                    error_response(state, taxonomy_status(err.status()), err.public_message());
-                return (response, report);
-            }
-            Err(_elapsed) => return timeout_response(state, report),
-        }
-    }
 
     // The fetch spends from the same budget. The adapter's own
     // `download_timeout_ms` (validated to never exceed the request budget)
@@ -383,6 +388,15 @@ fn cache_control_value(state: &AppState, resolved: &ResolvedRequest) -> String {
             state.config.unversioned_success_ttl_seconds
         )
     }
+}
+
+fn if_none_match_tags(headers: &HeaderMap) -> Vec<String> {
+    headers
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(parse_if_none_match)
+        .collect()
 }
 
 fn etag_header(identity: &ObjectIdentity, resolved: &ResolvedRequest) -> HeaderValue {

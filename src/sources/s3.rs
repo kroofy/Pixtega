@@ -16,6 +16,7 @@ use aws_sdk_s3::error::{ProvideErrorMetadata, SdkError};
 
 use crate::config::S3SourceConfig;
 use crate::errors::{ConfigError, SourceError};
+use crate::etag::parse_entity_tag;
 use crate::sources::{FetchLimits, Source};
 use crate::types::{FetchedObject, IdentifiedObject, ObjectIdentity, UpstreamKey};
 
@@ -187,25 +188,11 @@ impl Source for S3Source {
 }
 
 fn s3_identity(e_tag: Option<&str>, version_id: Option<&str>) -> Option<ObjectIdentity> {
-    let etag = strip_etag_quotes(e_tag?)?;
-    let validator = match version_id {
-        Some(version) if !version.is_empty() => format!("{etag};{version}"),
-        _ => etag,
-    };
-    Some(ObjectIdentity::strong(validator))
-}
-
-fn strip_etag_quotes(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    let inner = trimmed
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .unwrap_or(trimmed);
-    if inner.is_empty() {
-        None
-    } else {
-        Some(inner.to_string())
+    let mut identity = parse_entity_tag(e_tag?)?;
+    if let Some(version) = version_id.filter(|value| !value.is_empty()) {
+        identity.validator = format!("{};{version}", identity.validator);
     }
+    Some(identity)
 }
 
 /// Map SDK failures onto the shared taxonomy. A modeled missing-key error

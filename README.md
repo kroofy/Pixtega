@@ -89,9 +89,13 @@ is a 400.
 A 200 carries an `ETag` when the Source exposed an object identity (S3
 `ETag`/`VersionId`, HTTP `ETag`, or filesystem mtime+size+key). The tag
 is that identity plus the resolved Transform. Weak upstream tags stay
-weak. A caller (or CDN) that sends `If-None-Match` gets `304 Not Modified`
-when the identity still matches, without a source-body fetch or encode.
-No identity, or a mismatch, is a normal 200. There is no `Last-Modified`.
+weak; filesystem identity is always weak. A caller (or CDN) that sends
+`If-None-Match` gets `304 Not Modified` when the identity still matches,
+without a source-body fetch or encode. Identify runs before a derivation
+permit, so a matching revalidation does not queue behind encodes. A HEAD
+the origin refuses (other than timeout) is ignored and the service
+fetches instead. No identity, or a mismatch, is a normal 200. There is
+no `Last-Modified`.
 
 ### Error taxonomy
 

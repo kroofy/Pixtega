@@ -44,7 +44,8 @@ pub trait Source: Send + Sync {
     /// Resolve object identity without reading bytes, for conditional
     /// requests. `Ok(None)` means the Transport has no validator (HTTP HEAD
     /// unsupported or no `ETag`); the caller must fetch. Failures use the
-    /// same taxonomy as [`Source::fetch`].
+    /// same taxonomy as [`Source::fetch`]. The handler treats every identify
+    /// error except timeout as "no identity" and fetches.
     async fn identify(&self, key: &UpstreamKey) -> Result<Option<IdentifiedObject>, SourceError>;
 }
 

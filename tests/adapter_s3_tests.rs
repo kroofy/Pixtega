@@ -602,6 +602,18 @@ async fn fetch_captures_etag() {
 }
 
 #[tokio::test]
+async fn fetch_captures_weak_etag() {
+    let fake = FakeS3::start(HashMap::from([(
+        format!("/{BUCKET}/photo.jpg"),
+        Script::Bytes(object_response_with_etag(b"object-bytes", "W/\"inode\"")),
+    )]))
+    .await;
+    let source = adapter(&fake, default_limits()).await;
+    let fetched = source.fetch(&key(&["photo.jpg"])).await.unwrap();
+    assert_eq!(fetched.identity, Some(ObjectIdentity::weak("inode")));
+}
+
+#[tokio::test]
 async fn identify_uses_head_and_returns_etag() {
     let fake = FakeS3::start(HashMap::from([(
         format!("/{BUCKET}/photo.jpg"),

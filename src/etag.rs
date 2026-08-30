@@ -21,10 +21,16 @@ impl DerivedETag {
 
     /// RFC 9110 weak comparison: the opaque tags match, `W/` is ignored.
     pub fn matches_if_none_match(&self, header: &str) -> bool {
+        self.matches_any(&parse_if_none_match(header))
+    }
+
+    /// Same comparison against tags already parsed from every
+    /// `If-None-Match` line.
+    pub fn matches_any(&self, tags: &[String]) -> bool {
         let Some(want) = opaque_tag(&self.0) else {
             return false;
         };
-        parse_if_none_match(header).iter().any(|got| got == &want)
+        tags.iter().any(|got| got == &want)
     }
 }
 
@@ -65,14 +71,12 @@ pub fn parse_entity_tag(raw: &str) -> Option<ObjectIdentity> {
 }
 
 fn unquote_or_token(raw: &str) -> Option<String> {
-    if let Some(inner) = raw.strip_prefix('"') {
-        let end = inner.find('"')?;
-        return Some(inner[..end].to_string());
-    }
-    if raw.is_empty() || raw.contains(|c: char| c == ',' || c.is_whitespace()) {
+    let inner = raw.strip_prefix('"')?;
+    let end = inner.find('"')?;
+    if end + 1 != inner.len() {
         return None;
     }
-    Some(raw.to_string())
+    Some(inner[..end].to_string())
 }
 
 fn opaque_tag(etag: &str) -> Option<String> {
@@ -81,7 +85,7 @@ fn opaque_tag(etag: &str) -> Option<String> {
 
 /// Opaque tags from `If-None-Match`. `*` is ignored (no representation
 /// exists yet that we would claim).
-fn parse_if_none_match(header: &str) -> Vec<String> {
+pub(crate) fn parse_if_none_match(header: &str) -> Vec<String> {
     let header = header.trim();
     if header.is_empty() || header == "*" {
         return Vec::new();
@@ -203,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_entity_tag_accepts_strong_weak_and_unquoted() {
+    fn parse_entity_tag_accepts_quoted_strong_and_weak_only() {
         assert_eq!(
             parse_entity_tag("\"abc\""),
             Some(ObjectIdentity::strong("abc"))
@@ -216,10 +220,8 @@ mod tests {
             parse_entity_tag("  W/\"abc\"  "),
             Some(ObjectIdentity::weak("abc"))
         );
-        assert_eq!(
-            parse_entity_tag("bare-token"),
-            Some(ObjectIdentity::strong("bare-token"))
-        );
+        assert_eq!(parse_entity_tag("bare-token"), None);
+        assert_eq!(parse_entity_tag("\"abc\"suffix"), None);
         assert_eq!(parse_entity_tag(""), None);
         assert_eq!(parse_entity_tag("\""), None);
         assert_eq!(parse_entity_tag("W/\"\""), None);

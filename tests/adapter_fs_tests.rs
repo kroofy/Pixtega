@@ -56,7 +56,7 @@ async fn nested_file_is_fetched_with_no_upstream_status() {
     assert_eq!(fetched.bytes, b"jpeg-bytes");
     assert_eq!(fetched.upstream_status, None);
     let identity = fetched.identity.expect("filesystem identity");
-    assert!(!identity.weak);
+    assert!(identity.weak, "filesystem identity is weak");
     assert!(identity.validator.contains("a/b/photo.jpg"));
 }
 
@@ -247,7 +247,8 @@ async fn identify_matches_fetch_identity_without_reading_bytes() {
         .await
         .expect("identify succeeds")
         .expect("filesystem always has identity");
-    assert_eq!(Some(identified.identity), fetched.identity);
+    assert_eq!(Some(identified.identity.clone()), fetched.identity);
+    assert!(identified.identity.weak, "filesystem identity is weak");
     assert_eq!(identified.upstream_status, None);
 }
 

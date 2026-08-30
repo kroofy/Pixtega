@@ -111,8 +111,9 @@ pub struct ResolvedRequest {
 /// An upstream object validator, when the Transport exposed one.
 ///
 /// `validator` is the opaque tag without quotes or a `W/` prefix. `weak`
-/// is true only when the upstream sent a weak ETag. Filesystem identity
-/// (mtime + size + key) is treated as strong.
+/// is true when the upstream sent a weak ETag, or when identity is the
+/// filesystem mtime + size + key (not a content hash). Missing or
+/// pre-epoch mtime is absence of identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObjectIdentity {
     pub validator: String,
@@ -149,6 +150,6 @@ pub struct FetchedObject {
     pub bytes: Vec<u8>,
     pub upstream_status: Option<u16>,
     /// Present when the Transport exposed an object validator (S3 ETag,
-    /// HTTP `ETag`, filesystem mtime+size+key).
+    /// HTTP `ETag`, or a usable filesystem mtime+size+key).
     pub identity: Option<ObjectIdentity>,
 }
