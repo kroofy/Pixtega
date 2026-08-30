@@ -504,6 +504,7 @@ async fn head_304_matches_get_304() {
         assert_eq!(head.header(header), get.header(header), "header {header}");
     }
     assert!(head.body.is_empty());
+    assert_eq!(get.header("content-length"), None);
     assert_eq!(head.header("content-length"), None);
     assert_security_headers(&head);
 }

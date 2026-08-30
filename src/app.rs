@@ -146,7 +146,11 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
     // must not be captured across await points.
     let (parts, _body) = request.into_parts();
     let (response, report) = respond(&state, &parts.method, &parts.uri, &parts.headers).await;
-    let response = if parts.method == Method::HEAD {
+    // 304 already has an empty body. Rebuilding it through `drop_body`
+    // would advertise `Content-Length: 0`, which the matching GET 304
+    // does not.
+    let response = if parts.method == Method::HEAD && response.status() != StatusCode::NOT_MODIFIED
+    {
         drop_body(response).await
     } else {
         response
@@ -352,13 +356,9 @@ async fn drop_body(response: Response) -> Response {
     let bytes = axum::body::to_bytes(body, usize::MAX)
         .await
         .expect("responses are built from in-memory bodies");
-    // A 304 has no body; do not advertise a length. HEAD of a 200 still
-    // carries the derived image's Content-Length.
-    if parts.status != StatusCode::NOT_MODIFIED {
-        parts
-            .headers
-            .insert(header::CONTENT_LENGTH, HeaderValue::from(bytes.len()));
-    }
+    parts
+        .headers
+        .insert(header::CONTENT_LENGTH, HeaderValue::from(bytes.len()));
     Response::from_parts(parts, Body::empty())
 }
 
