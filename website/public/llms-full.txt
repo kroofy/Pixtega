@@ -402,6 +402,7 @@ keeps its original dimensions.
 | --- | --- |
 | 200 with `v` | `public, max-age=31536000, immutable` |
 | 200 without `v` | `public, max-age={unversioned_success_ttl_seconds}` |
+| 304 | same policy the matching 200 would have used |
 | 404 | `public, max-age={not_found_ttl_seconds}` |
 | every other error | `no-store` |
 
@@ -410,6 +411,13 @@ when source bytes change; the service cannot verify this for you. The
 table shows the default `version_token = "accept"`: with `"ignore"` a 200
 with `v` uses the unversioned policy instead, and with `"reject"` any `v`
 is a 400.
+
+A 200 carries an `ETag` when the Source exposed an object identity (S3
+`ETag`/`VersionId`, HTTP `ETag`, or filesystem mtime+size+key). The tag
+is that identity plus the resolved Transform. Weak upstream tags stay
+weak. A caller (or CDN) that sends `If-None-Match` gets `304 Not Modified`
+when the identity still matches, without a source-body fetch or encode.
+No identity, or a mismatch, is a normal 200. There is no `Last-Modified`.
 
 ### Errors
 
@@ -429,9 +437,12 @@ cannot be cached as "missing".
 
 ### Response headers
 
-Successful responses carry the derived image's `Content-Type` and the
-`Cache-Control` policy above. Every response — success or error — also
-carries `X-Content-Type-Options: nosniff`,
+Successful 200 responses carry the derived image's `Content-Type`, the
+`Cache-Control` policy above, and an `ETag` when the source exposed an
+object identity. `If-None-Match` matching that tag is `304 Not Modified`
+with the same cache policy and no body. There is no `Last-Modified`.
+Every response — success or error — also carries
+`X-Content-Type-Options: nosniff`,
 `Content-Security-Policy: default-src 'none'`, and
 `X-Frame-Options: DENY`.
 

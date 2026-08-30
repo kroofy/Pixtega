@@ -55,6 +55,9 @@ async fn nested_file_is_fetched_with_no_upstream_status() {
         .expect("fetch succeeds");
     assert_eq!(fetched.bytes, b"jpeg-bytes");
     assert_eq!(fetched.upstream_status, None);
+    let identity = fetched.identity.expect("filesystem identity");
+    assert!(!identity.weak);
+    assert!(identity.validator.contains("a/b/photo.jpg"));
 }
 
 #[tokio::test]
@@ -231,4 +234,48 @@ async fn file_at_exact_limit_is_fetched() {
         .await
         .expect("exact-limit file must be fetched");
     assert_eq!(fetched.bytes, body);
+}
+
+#[tokio::test]
+async fn identify_matches_fetch_identity_without_reading_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), &["photo.jpg"], b"jpeg-bytes");
+    let src = source(dir.path(), 1024);
+    let fetched = src.fetch(&key(&["photo.jpg"])).await.unwrap();
+    let identified = src
+        .identify(&key(&["photo.jpg"]))
+        .await
+        .expect("identify succeeds")
+        .expect("filesystem always has identity");
+    assert_eq!(Some(identified.identity), fetched.identity);
+    assert_eq!(identified.upstream_status, None);
+}
+
+#[tokio::test]
+async fn identify_missing_file_is_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let err = source(dir.path(), 1024)
+        .identify(&key(&["missing.jpg"]))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            SourceError::NotFound {
+                upstream_status: None
+            }
+        ),
+        "got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn identify_oversized_file_is_too_large() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), &["big.jpg"], &[0u8; 33]);
+    let err = source(dir.path(), 32)
+        .identify(&key(&["big.jpg"]))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, SourceError::TooLarge { .. }), "got {err:?}");
 }

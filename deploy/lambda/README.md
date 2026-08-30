@@ -193,7 +193,9 @@ Put CloudFront in front of it:
 - Create a CloudFront distribution with the Function URL domain as the
   origin. The service's `Cache-Control` policy (year-long immutable for
   versioned successes, bounded TTLs for the rest) is designed for exactly
-  this; most traffic never reaches the function.
+  this; most traffic never reaches the function. Unversioned 200s also
+  carry an `ETag` when the source exposes an object identity, so a CDN
+  revalidation can be answered `304` without a re-derive.
 - Lock the origin to CloudFront: switch the Function URL to
   `--auth-type AWS_IAM` and attach a CloudFront Origin Access Control
   (OAC) for Lambda Function URLs, so only the distribution can invoke the

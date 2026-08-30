@@ -13,14 +13,15 @@
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use reqwest::header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, LOCATION};
-use reqwest::StatusCode;
+use reqwest::header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, ETAG, LOCATION};
+use reqwest::{Method, StatusCode};
 use url::Url;
 
 use crate::config::HttpSourceConfig;
 use crate::errors::{ConfigError, SourceError};
+use crate::etag::parse_entity_tag;
 use crate::sources::{FetchLimits, Source};
-use crate::types::{FetchedObject, UpstreamKey};
+use crate::types::{FetchedObject, IdentifiedObject, UpstreamKey};
 
 pub struct HttpSource {
     /// Redirects are never followed by the client itself; the adapter
@@ -83,7 +84,93 @@ impl HttpSource {
         })
     }
 
-    async fn fetch_inner(&self, mut url: Url) -> Result<FetchedObject, SourceError> {
+    async fn fetch_inner(&self, url: Url) -> Result<FetchedObject, SourceError> {
+        let Some(response) = self.request_object(url, false).await? else {
+            return Err(unavailable(None, "GET never returns Method Not Allowed"));
+        };
+
+        let status = response.status();
+        let code = status.as_u16();
+
+        if let Some(encoding) = response.headers().get(CONTENT_ENCODING) {
+            let is_identity = encoding
+                .to_str()
+                .map(|value| value.trim().eq_ignore_ascii_case("identity"))
+                .unwrap_or(false);
+            if !is_identity {
+                return Err(unavailable(Some(status), "unsupported content encoding"));
+            }
+        }
+
+        // Advertised length check; the header may be absent or false,
+        // so the limit is enforced again below while streaming.
+        let advertised = advertised_length(response.headers());
+        if let Some(advertised) = advertised {
+            if advertised > self.limits.max_bytes {
+                return Err(SourceError::TooLarge {
+                    upstream_status: Some(code),
+                });
+            }
+        }
+
+        let identity = response
+            .headers()
+            .get(ETAG)
+            .and_then(|value| value.to_str().ok())
+            .and_then(parse_entity_tag);
+
+        // Preallocate from the advertised length (already bounded by
+        // max_bytes above) so large bodies avoid the repeated
+        // grow-and-copy of an amortized Vec.
+        let mut bytes: Vec<u8> = Vec::with_capacity(advertised.unwrap_or(0) as usize);
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(map_reqwest_error)?;
+            if bytes.len() as u64 + chunk.len() as u64 > self.limits.max_bytes {
+                return Err(SourceError::TooLarge {
+                    upstream_status: Some(code),
+                });
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+
+        Ok(FetchedObject {
+            bytes,
+            upstream_status: Some(code),
+            identity,
+        })
+    }
+
+    async fn identify_inner(&self, url: Url) -> Result<Option<IdentifiedObject>, SourceError> {
+        let Some(response) = self.request_object(url, true).await? else {
+            return Ok(None);
+        };
+        if let Some(advertised) = advertised_length(response.headers()) {
+            if advertised > self.limits.max_bytes {
+                return Err(SourceError::TooLarge {
+                    upstream_status: Some(response.status().as_u16()),
+                });
+            }
+        }
+        let identity = response
+            .headers()
+            .get(ETAG)
+            .and_then(|value| value.to_str().ok())
+            .and_then(parse_entity_tag);
+        Ok(identity.map(|identity| IdentifiedObject {
+            identity,
+            upstream_status: Some(response.status().as_u16()),
+        }))
+    }
+
+    /// One exchange after redirects. `head` uses HEAD; 405/501 then return
+    /// `Ok(None)` so identify can fall through to fetch. GET never takes
+    /// that path.
+    async fn request_object(
+        &self,
+        mut url: Url,
+        head: bool,
+    ) -> Result<Option<reqwest::Response>, SourceError> {
         let mut redirects_followed: u32 = 0;
         loop {
             // Belt: configuration validation already rejects private
@@ -95,9 +182,10 @@ impl HttpSource {
             {
                 return Err(unavailable(None, "destination blocked by policy"));
             }
+            let method = if head { Method::HEAD } else { Method::GET };
             let response = self
                 .client
-                .get(url.clone())
+                .request(method, url.clone())
                 .header(ACCEPT_ENCODING, "identity")
                 .send()
                 .await
@@ -126,6 +214,9 @@ impl HttpSource {
             }
 
             let code = status.as_u16();
+            if head && (code == 405 || code == 501) {
+                return Ok(None);
+            }
             if code == 404 || code == 410 {
                 return Err(SourceError::NotFound {
                     upstream_status: Some(code),
@@ -134,51 +225,7 @@ impl HttpSource {
             if !status.is_success() {
                 return Err(unavailable(Some(status), "unexpected upstream status"));
             }
-
-            if let Some(encoding) = response.headers().get(CONTENT_ENCODING) {
-                let is_identity = encoding
-                    .to_str()
-                    .map(|value| value.trim().eq_ignore_ascii_case("identity"))
-                    .unwrap_or(false);
-                if !is_identity {
-                    return Err(unavailable(Some(status), "unsupported content encoding"));
-                }
-            }
-
-            // Advertised length check; the header may be absent or false,
-            // so the limit is enforced again below while streaming.
-            let advertised = response
-                .headers()
-                .get(CONTENT_LENGTH)
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.trim().parse::<u64>().ok());
-            if let Some(advertised) = advertised {
-                if advertised > self.limits.max_bytes {
-                    return Err(SourceError::TooLarge {
-                        upstream_status: Some(code),
-                    });
-                }
-            }
-
-            // Preallocate from the advertised length (already bounded by
-            // max_bytes above) so large bodies avoid the repeated
-            // grow-and-copy of an amortized Vec.
-            let mut bytes: Vec<u8> = Vec::with_capacity(advertised.unwrap_or(0) as usize);
-            let mut stream = response.bytes_stream();
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk.map_err(map_reqwest_error)?;
-                if bytes.len() as u64 + chunk.len() as u64 > self.limits.max_bytes {
-                    return Err(SourceError::TooLarge {
-                        upstream_status: Some(code),
-                    });
-                }
-                bytes.extend_from_slice(&chunk);
-            }
-
-            return Ok(FetchedObject {
-                bytes,
-                upstream_status: Some(code),
-            });
+            return Ok(Some(response));
         }
     }
 
@@ -206,11 +253,8 @@ impl HttpSource {
         }
         Ok(())
     }
-}
 
-#[async_trait]
-impl Source for HttpSource {
-    async fn fetch(&self, key: &UpstreamKey) -> Result<FetchedObject, SourceError> {
+    fn url_for(&self, key: &UpstreamKey) -> Result<Url, SourceError> {
         let mut url = self.base_url.clone();
         {
             let mut segments = url
@@ -219,6 +263,14 @@ impl Source for HttpSource {
             segments.pop_if_empty();
             segments.extend(&key.segments);
         }
+        Ok(url)
+    }
+}
+
+#[async_trait]
+impl Source for HttpSource {
+    async fn fetch(&self, key: &UpstreamKey) -> Result<FetchedObject, SourceError> {
+        let url = self.url_for(key)?;
         // One timeout for the whole exchange: every redirect hop and the
         // complete body stream.
         match tokio::time::timeout(self.limits.timeout, self.fetch_inner(url)).await {
@@ -226,6 +278,21 @@ impl Source for HttpSource {
             Err(_) => Err(SourceError::Timeout),
         }
     }
+
+    async fn identify(&self, key: &UpstreamKey) -> Result<Option<IdentifiedObject>, SourceError> {
+        let url = self.url_for(key)?;
+        match tokio::time::timeout(self.limits.timeout, self.identify_inner(url)).await {
+            Ok(result) => result,
+            Err(_) => Err(SourceError::Timeout),
+        }
+    }
+}
+
+fn advertised_length(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    headers
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
 }
 
 fn is_followable_redirect(status: StatusCode) -> bool {

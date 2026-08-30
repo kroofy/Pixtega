@@ -21,6 +21,8 @@ when it is introduced. Test names are `<file> :: <function>` under
 | 11 | allow a redirect outside the configured origin or base path | `adapter_http_tests::redirect_to_a_different_port_host_or_scheme_is_unavailable`, `adapter_http_tests::redirect_escaping_the_base_path_is_unavailable`, `adapter_http_tests::redirect_chain_exceeding_the_limit_is_unavailable` |
 | 12 | allow a filesystem symlink | `adapter_fs_tests::symlink_to_file_inside_root_is_rejected`, `adapter_fs_tests::symlink_to_file_outside_root_is_rejected`, `adapter_fs_tests::symlinked_intermediate_directory_is_rejected` |
 | 13 | flatten alpha for WebP or fail to flatten it for JPEG | `image_tests::transparency_survives_webp`, `image_tests::transparency_survives_avif`, `image_tests::transparent_source_flattens_to_white_for_jpeg` |
+| 14 | ignore `If-None-Match` and always re-derive | `response_tests::matching_if_none_match_is_304_without_a_body`, `response_tests::http_origin_etag_revalidates_via_head` |
+| 15 | emit a strong derived ETag from a weak upstream tag | `response_tests::weak_upstream_etag_stays_weak_on_the_derived_tag` |
 
 ## Documented equivalent mutants
 

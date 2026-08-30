@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use crate::config::FilesystemSourceConfig;
 use crate::errors::{ConfigError, SourceError};
 use crate::sources::{FetchLimits, Source};
-use crate::types::{FetchedObject, UpstreamKey};
+use crate::types::{FetchedObject, IdentifiedObject, ObjectIdentity, UpstreamKey};
 
 /// Read files in bounded chunks so the byte limit is enforced while
 /// reading, independent of what metadata reported.
@@ -44,6 +44,15 @@ impl Source for FilesystemSource {
             .await
             .map_err(|_| unavailable("filesystem worker task failed"))?
     }
+
+    async fn identify(&self, key: &UpstreamKey) -> Result<Option<IdentifiedObject>, SourceError> {
+        let root = self.root.clone();
+        let segments = key.segments.clone();
+        let limits = self.limits;
+        tokio::task::spawn_blocking(move || identify_blocking(&root, &segments, &limits))
+            .await
+            .map_err(|_| unavailable("filesystem worker task failed"))?
+    }
 }
 
 fn unavailable(detail: &str) -> SourceError {
@@ -53,22 +62,27 @@ fn unavailable(detail: &str) -> SourceError {
     }
 }
 
+struct ResolvedFile {
+    path: PathBuf,
+    metadata: std::fs::Metadata,
+}
+
 /// Walk `segments` beneath `root` component by component using
 /// `symlink_metadata` so symlinks are detected, never followed.
-fn fetch_blocking(
+fn resolve_file(
     root: &Path,
     segments: &[String],
     limits: &FetchLimits,
-) -> Result<FetchedObject, SourceError> {
+) -> Result<ResolvedFile, SourceError> {
     if segments.is_empty() {
         return Err(unavailable("empty upstream key"));
     }
 
     let mut path = root.to_path_buf();
-    let mut size_hint = 0u64;
+    let mut metadata = None;
     for (index, segment) in segments.iter().enumerate() {
         path.push(segment);
-        let metadata = match std::fs::symlink_metadata(&path) {
+        let step = match std::fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 return Err(SourceError::NotFound {
@@ -78,7 +92,7 @@ fn fetch_blocking(
             Err(_) => return Err(unavailable("filesystem metadata read failed")),
         };
 
-        if metadata.file_type().is_symlink() {
+        if step.file_type().is_symlink() {
             // Every symlink below the root is rejected, whether it points
             // inside or outside the root.
             return Err(unavailable("symlink in source path"));
@@ -86,16 +100,16 @@ fn fetch_blocking(
 
         let is_last = index + 1 == segments.len();
         if is_last {
-            if !metadata.is_file() {
+            if !step.is_file() {
                 return Err(unavailable("source path is not a regular file"));
             }
-            if metadata.len() > limits.max_bytes {
+            if step.len() > limits.max_bytes {
                 return Err(SourceError::TooLarge {
                     upstream_status: None,
                 });
             }
-            size_hint = metadata.len();
-        } else if !metadata.is_dir() {
+            metadata = Some(step);
+        } else if !step.is_dir() {
             // An intermediate component that is not a directory means the
             // full key cannot name an object: absence, not a fault.
             return Err(SourceError::NotFound {
@@ -104,7 +118,49 @@ fn fetch_blocking(
         }
     }
 
-    read_limited(&path, limits.max_bytes, size_hint)
+    Ok(ResolvedFile {
+        path,
+        metadata: metadata.expect("last segment always records metadata"),
+    })
+}
+
+fn file_identity(segments: &[String], metadata: &std::fs::Metadata) -> ObjectIdentity {
+    let mtime = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    ObjectIdentity::strong(format!(
+        "{}:{}:{}",
+        mtime,
+        metadata.len(),
+        segments.join("/")
+    ))
+}
+
+fn fetch_blocking(
+    root: &Path,
+    segments: &[String],
+    limits: &FetchLimits,
+) -> Result<FetchedObject, SourceError> {
+    let resolved = resolve_file(root, segments, limits)?;
+    let identity = file_identity(segments, &resolved.metadata);
+    let mut fetched = read_limited(&resolved.path, limits.max_bytes, resolved.metadata.len())?;
+    fetched.identity = Some(identity);
+    Ok(fetched)
+}
+
+fn identify_blocking(
+    root: &Path,
+    segments: &[String],
+    limits: &FetchLimits,
+) -> Result<Option<IdentifiedObject>, SourceError> {
+    let resolved = resolve_file(root, segments, limits)?;
+    Ok(Some(IdentifiedObject {
+        identity: file_identity(segments, &resolved.metadata),
+        upstream_status: None,
+    }))
 }
 
 /// Read the file in chunks, enforcing the byte limit again while reading
@@ -153,6 +209,7 @@ fn read_all_limited(
     Ok(FetchedObject {
         bytes,
         upstream_status: None,
+        identity: None,
     })
 }
 

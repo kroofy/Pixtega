@@ -15,7 +15,7 @@ use pixtega::config::HttpSourceConfig;
 use pixtega::errors::SourceError;
 use pixtega::sources::http::HttpSource;
 use pixtega::sources::{FetchLimits, Source};
-use pixtega::types::UpstreamKey;
+use pixtega::types::{ObjectIdentity, UpstreamKey};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
 use url::Url;
@@ -26,6 +26,7 @@ use url::Url;
 
 #[derive(Debug, Clone)]
 struct Recorded {
+    method: String,
     path: String,
     query: Option<String>,
     headers: Vec<(String, String)>,
@@ -173,7 +174,9 @@ async fn read_request(stream: &mut (impl AsyncRead + Unpin)) -> Option<Recorded>
     let text = String::from_utf8_lossy(&head);
     let mut lines = text.split("\r\n");
     let request_line = lines.next()?;
-    let target = request_line.split_whitespace().nth(1)?;
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next()?.to_string();
+    let target = parts.next()?;
     let (path, query) = match target.split_once('?') {
         Some((p, q)) => (p.to_string(), Some(q.to_string())),
         None => (target.to_string(), None),
@@ -186,6 +189,7 @@ async fn read_request(stream: &mut (impl AsyncRead + Unpin)) -> Option<Recorded>
         })
         .collect();
     Some(Recorded {
+        method,
         path,
         query,
         headers,
@@ -193,13 +197,18 @@ async fn read_request(stream: &mut (impl AsyncRead + Unpin)) -> Option<Recorded>
 }
 
 fn ok_response(body: &[u8]) -> Vec<u8> {
-    let mut response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    )
-    .into_bytes();
-    response.extend_from_slice(body);
-    response
+    ok_response_with_headers(body, &[])
+}
+
+fn ok_response_with_headers(body: &[u8], extra: &[(&str, &str)]) -> Vec<u8> {
+    let mut response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n", body.len());
+    for (name, value) in extra {
+        response.push_str(&format!("{name}: {value}\r\n"));
+    }
+    response.push_str("Connection: close\r\n\r\n");
+    let mut bytes = response.into_bytes();
+    bytes.extend_from_slice(body);
+    bytes
 }
 
 fn status_response(code: u16, reason: &str) -> String {
@@ -897,4 +906,95 @@ async fn unreadable_ca_certificate_file_is_a_config_error() {
         allow_private_destinations: true,
     };
     assert!(HttpSource::new(&config, default_limits()).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Identity: ETag capture on GET, HEAD for identify
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn fetch_captures_strong_and_weak_etags() {
+    let fixture = Fixture::start(HashMap::from([
+        (
+            "/strong.jpg".to_string(),
+            Script::Bytes(ok_response_with_headers(b"s", &[("ETag", "\"abc\"")])),
+        ),
+        (
+            "/weak.jpg".to_string(),
+            Script::Bytes(ok_response_with_headers(b"w", &[("ETag", "W/\"inode\"")])),
+        ),
+        ("/none.jpg".to_string(), Script::Bytes(ok_response(b"n"))),
+    ]))
+    .await;
+    let source = adapter(&fixture.url("/"), None, default_limits());
+
+    let strong = source.fetch(&key(&["strong.jpg"])).await.unwrap();
+    assert_eq!(strong.identity, Some(ObjectIdentity::strong("abc")));
+    let weak = source.fetch(&key(&["weak.jpg"])).await.unwrap();
+    assert_eq!(weak.identity, Some(ObjectIdentity::weak("inode")));
+    let none = source.fetch(&key(&["none.jpg"])).await.unwrap();
+    assert_eq!(none.identity, None);
+}
+
+#[tokio::test]
+async fn identify_uses_head_and_returns_etag() {
+    let fixture = Fixture::start(HashMap::from([(
+        "/photo.jpg".to_string(),
+        Script::Bytes(ok_response_with_headers(b"ignored", &[("ETag", "\"xyz\"")])),
+    )]))
+    .await;
+    let source = adapter(&fixture.url("/"), None, default_limits());
+    let identified = source
+        .identify(&key(&["photo.jpg"]))
+        .await
+        .expect("identify succeeds")
+        .expect("etag present");
+    assert_eq!(identified.identity, ObjectIdentity::strong("xyz"));
+    assert_eq!(identified.upstream_status, Some(200));
+    assert_eq!(fixture.recorded()[0].method, "HEAD");
+}
+
+#[tokio::test]
+async fn identify_head_405_is_no_identity() {
+    let fixture = Fixture::start(HashMap::from([(
+        "/photo.jpg".to_string(),
+        Script::Bytes(status_response(405, "Method Not Allowed").into_bytes()),
+    )]))
+    .await;
+    let source = adapter(&fixture.url("/"), None, default_limits());
+    let identified = source
+        .identify(&key(&["photo.jpg"]))
+        .await
+        .expect("405 is not an error");
+    assert_eq!(identified, None);
+}
+
+#[tokio::test]
+async fn identify_missing_object_is_not_found() {
+    let fixture = Fixture::start(HashMap::new()).await;
+    let source = adapter(&fixture.url("/"), None, default_limits());
+    let err = source.identify(&key(&["missing.jpg"])).await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            SourceError::NotFound {
+                upstream_status: Some(404)
+            }
+        ),
+        "got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn identify_advertised_length_over_limit_is_too_large() {
+    let head =
+        "HTTP/1.1 200 OK\r\nContent-Length: 100000\r\nETag: \"big\"\r\nConnection: close\r\n\r\n";
+    let fixture = Fixture::start(HashMap::from([(
+        "/huge.jpg".to_string(),
+        Script::Bytes(head.as_bytes().to_vec()),
+    )]))
+    .await;
+    let source = adapter(&fixture.url("/"), None, default_limits());
+    let err = source.identify(&key(&["huge.jpg"])).await.unwrap_err();
+    assert!(matches!(err, SourceError::TooLarge { .. }), "got {err:?}");
 }

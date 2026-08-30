@@ -13,12 +13,11 @@ use async_trait::async_trait;
 use aws_sdk_s3::config::interceptors::InterceptorContext;
 use aws_sdk_s3::config::retry::{ClassifyRetry, RetryAction, RetryConfig};
 use aws_sdk_s3::error::{ProvideErrorMetadata, SdkError};
-use aws_sdk_s3::operation::get_object::GetObjectError;
 
 use crate::config::S3SourceConfig;
 use crate::errors::{ConfigError, SourceError};
 use crate::sources::{FetchLimits, Source};
-use crate::types::{FetchedObject, UpstreamKey};
+use crate::types::{FetchedObject, IdentifiedObject, ObjectIdentity, UpstreamKey};
 
 /// Retry `DispatchFailure` that never got an HTTP response, except
 /// timeouts. Service errors stay one-shot: a 403 is still a 403.
@@ -108,6 +107,7 @@ impl S3Source {
             }
         }
 
+        let identity = s3_identity(output.e_tag(), output.version_id());
         let mut body = output.body;
         let mut bytes: Vec<u8> = Vec::new();
         loop {
@@ -133,7 +133,37 @@ impl S3Source {
         Ok(FetchedObject {
             bytes,
             upstream_status: Some(200),
+            identity,
         })
+    }
+
+    async fn identify_inner(
+        &self,
+        key: &UpstreamKey,
+    ) -> Result<Option<IdentifiedObject>, SourceError> {
+        let output = self
+            .client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(key.joined())
+            .send()
+            .await
+            .map_err(map_sdk_error)?;
+
+        if let Some(advertised) = output.content_length() {
+            if advertised < 0 || advertised as u64 > self.limits.max_bytes {
+                return Err(SourceError::TooLarge {
+                    upstream_status: Some(200),
+                });
+            }
+        }
+
+        Ok(
+            s3_identity(output.e_tag(), output.version_id()).map(|identity| IdentifiedObject {
+                identity,
+                upstream_status: Some(200),
+            }),
+        )
     }
 }
 
@@ -147,16 +177,46 @@ impl Source for S3Source {
             Err(_) => Err(SourceError::Timeout),
         }
     }
+
+    async fn identify(&self, key: &UpstreamKey) -> Result<Option<IdentifiedObject>, SourceError> {
+        match tokio::time::timeout(self.limits.timeout, self.identify_inner(key)).await {
+            Ok(result) => result,
+            Err(_) => Err(SourceError::Timeout),
+        }
+    }
+}
+
+fn s3_identity(e_tag: Option<&str>, version_id: Option<&str>) -> Option<ObjectIdentity> {
+    let etag = strip_etag_quotes(e_tag?)?;
+    let validator = match version_id {
+        Some(version) if !version.is_empty() => format!("{etag};{version}"),
+        _ => etag,
+    };
+    Some(ObjectIdentity::strong(validator))
+}
+
+fn strip_etag_quotes(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let inner = trimmed
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(trimmed);
+    if inner.is_empty() {
+        None
+    } else {
+        Some(inner.to_string())
+    }
 }
 
 /// Map SDK failures onto the shared taxonomy. A modeled missing-key error
 /// or a raw upstream 404 is absence; access denial (403/AccessDenied) is
 /// unavailability, never absence; dispatch/operation timeouts are timeouts.
-fn map_sdk_error(err: SdkError<GetObjectError>) -> SourceError {
+fn map_sdk_error<E: ProvideErrorMetadata>(err: SdkError<E>) -> SourceError {
     match err {
         SdkError::ServiceError(context) => {
             let status = context.raw().status().as_u16();
-            if context.err().is_no_such_key() || status == 404 {
+            let code = context.err().code().unwrap_or("unknown");
+            if status == 404 || code == "NoSuchKey" || code == "NotFound" {
                 return SourceError::NotFound {
                     upstream_status: Some(404),
                 };
@@ -164,7 +224,6 @@ fn map_sdk_error(err: SdkError<GetObjectError>) -> SourceError {
             // Everything else, including 403/AccessDenied, is
             // unavailability. Only the error code reaches the detail
             // string; response bodies and credentials never do.
-            let code = context.err().code().unwrap_or("unknown");
             SourceError::Unavailable {
                 upstream_status: Some(status),
                 detail: format!("s3 service error: {code}"),
