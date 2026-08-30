@@ -924,6 +924,10 @@ async fn fetch_captures_strong_and_weak_etags() {
             Script::Bytes(ok_response_with_headers(b"w", &[("ETag", "W/\"inode\"")])),
         ),
         ("/none.jpg".to_string(), Script::Bytes(ok_response(b"n"))),
+        (
+            "/junk.jpg".to_string(),
+            Script::Bytes(ok_response_with_headers(b"j", &[("ETag", "\"abc\"suffix")])),
+        ),
     ]))
     .await;
     let source = adapter(&fixture.url("/"), None, default_limits());
@@ -934,6 +938,8 @@ async fn fetch_captures_strong_and_weak_etags() {
     assert_eq!(weak.identity, Some(ObjectIdentity::weak("inode")));
     let none = source.fetch(&key(&["none.jpg"])).await.unwrap();
     assert_eq!(none.identity, None);
+    let junk = source.fetch(&key(&["junk.jpg"])).await.unwrap();
+    assert_eq!(junk.identity, None);
 }
 
 #[tokio::test]

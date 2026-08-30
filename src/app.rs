@@ -14,7 +14,7 @@ use tokio::sync::Semaphore;
 
 use crate::config::AppConfig;
 use crate::errors::{Outcome, ProcessError, RequestError, SourceError};
-use crate::etag::{derived_etag, parse_if_none_match};
+use crate::etag::derived_etag;
 use crate::logging::{CompletionEvent, SourceErrorEvent};
 use crate::processor;
 use crate::request::parse_request;
@@ -38,8 +38,7 @@ pub struct AppState {
     pub registry: SourceRegistry,
     /// Process-wide derivation permits: no more than
     /// `max_concurrent_derivations` Source Objects are fetched or processed
-    /// at once. Identify for a matching `If-None-Match` runs without a
-    /// permit. Acquired before fetching; released only when the blocking
+    /// at once. Acquired before fetching; released only when the blocking
     /// processing work actually finishes (libvips cannot be cancelled, so a
     /// timed-out derivation keeps occupying its slot until then).
     pub derivation_permits: Arc<Semaphore>,
@@ -224,18 +223,18 @@ async fn respond(
         return (response, report);
     };
 
-    // Conditional revalidation runs before the derivation permit so a
-    // matching If-None-Match can 304 while every slot is occupied by
-    // encode work. Identify errors other than timeout fall through: a
-    // WAF that 403s or 404s HEAD while GET works must not become the
-    // client answer. `*` and unparseable validators skip identify.
-    let if_none_match = if_none_match_tags(headers);
-    if !if_none_match.is_empty() {
+    // Identify before the permit so a matching revalidation can 304
+    // while encodes occupy every slot. Non-timeout identify errors
+    // fall through: a WAF that blocks HEAD must not become the answer.
+    if let Some(if_none_match) = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+    {
         match tokio::time::timeout_at(deadline, source.identify(&resolved.upstream_key)).await {
             Ok(Ok(Some(identified))) => {
                 report.upstream_status = identified.upstream_status;
                 let etag = derived_etag(&identified.identity, &resolved.transform);
-                if etag.matches_any(&if_none_match) {
+                if etag.matches_if_none_match(if_none_match) {
                     return (
                         not_modified_response(state, &resolved, &identified.identity),
                         report,
@@ -388,15 +387,6 @@ fn cache_control_value(state: &AppState, resolved: &ResolvedRequest) -> String {
             state.config.unversioned_success_ttl_seconds
         )
     }
-}
-
-fn if_none_match_tags(headers: &HeaderMap) -> Vec<String> {
-    headers
-        .get_all(header::IF_NONE_MATCH)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(parse_if_none_match)
-        .collect()
 }
 
 fn etag_header(identity: &ObjectIdentity, resolved: &ResolvedRequest) -> HeaderValue {

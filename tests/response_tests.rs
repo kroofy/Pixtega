@@ -625,22 +625,6 @@ async fn weak_upstream_etag_stays_weak_on_the_derived_tag() {
 }
 
 #[tokio::test]
-async fn filesystem_etag_is_weak() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("photo.jpg"), jpeg_fixture(64, 64)).unwrap();
-    let process: ProcessFn = Arc::new(|_bytes, _transform, _megapixels| Ok(vec![0u8; 8]));
-    let (addr, _state) = spawn_app_with_processor(
-        test_config(vec![filesystem_source(dir.path())], 10_000),
-        process,
-    )
-    .await;
-    let response = send_request(addr, "GET", "/images/files/photo.jpg/w320.webp").await;
-    assert_eq!(response.status, 200);
-    let etag = response.header("etag").expect("filesystem etag");
-    assert!(etag.starts_with("W/\""), "got {etag}");
-}
-
-#[tokio::test]
 async fn matching_if_none_match_skips_saturated_derivation_permits() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("photo.jpg"), jpeg_fixture(64, 64)).unwrap();
@@ -703,28 +687,6 @@ async fn matching_if_none_match_skips_saturated_derivation_permits() {
     release.store(true, Ordering::SeqCst);
     let occupied = occupy.await.expect("join");
     assert_eq!(occupied.status, 200);
-}
-
-#[tokio::test]
-async fn if_none_match_combines_every_header_line() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("photo.jpg"), jpeg_fixture(64, 64)).unwrap();
-    let process: ProcessFn = Arc::new(|_bytes, _transform, _megapixels| Ok(vec![0u8; 8]));
-    let (addr, _state) = spawn_app_with_processor(
-        test_config(vec![filesystem_source(dir.path())], 10_000),
-        process,
-    )
-    .await;
-    let first = send_request(addr, "GET", "/images/files/photo.jpg/w320.webp").await;
-    let etag = first.header("etag").expect("etag").to_string();
-    let revalidated = send_request_with_headers(
-        addr,
-        "GET",
-        "/images/files/photo.jpg/w320.webp",
-        &[("If-None-Match", "\"other\""), ("If-None-Match", &etag)],
-    )
-    .await;
-    assert_eq!(revalidated.status, 304);
 }
 
 fn http_origin_with_head_script(

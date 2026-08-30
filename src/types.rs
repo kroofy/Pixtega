@@ -110,10 +110,8 @@ pub struct ResolvedRequest {
 
 /// An upstream object validator, when the Transport exposed one.
 ///
-/// `validator` is the opaque tag without quotes or a `W/` prefix. `weak`
-/// is true when the upstream sent a weak ETag, or when identity is the
-/// filesystem mtime + size + key (not a content hash). Missing or
-/// pre-epoch mtime is absence of identity.
+/// `validator` is the opaque tag without quotes or a `W/` prefix.
+/// Filesystem identity is weak. Missing or pre-epoch mtime is no identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObjectIdentity {
     pub validator: String,

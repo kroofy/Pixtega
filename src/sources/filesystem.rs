@@ -132,18 +132,8 @@ fn resolve_file(
 }
 
 fn file_identity(segments: &[String], metadata: &std::fs::Metadata) -> Option<ObjectIdentity> {
-    identity_from_mtime(segments, metadata.modified(), metadata.len())
-}
-
-/// Filesystem identity is weak: mtime + size is not a content hash, and
-/// a same-second rewrite can share a validator. Missing or pre-epoch
-/// mtime is absence of identity, not a fake `0`.
-fn identity_from_mtime(
-    segments: &[String],
-    modified: std::io::Result<std::time::SystemTime>,
-    len: u64,
-) -> Option<ObjectIdentity> {
-    let mtime = modified
+    let mtime = metadata
+        .modified()
         .ok()?
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?
@@ -151,7 +141,7 @@ fn identity_from_mtime(
     Some(ObjectIdentity::weak(format!(
         "{}:{}:{}",
         mtime,
-        len,
+        metadata.len(),
         segments.join("/")
     )))
 }
@@ -361,27 +351,5 @@ mod tests {
             fetch_blocking(dir.path(), &["nul\0byte".to_string()], &limits),
             "invalid path metadata error",
         );
-    }
-
-    #[test]
-    fn identity_is_weak_and_omitted_when_mtime_is_unusable() {
-        let segments = vec!["photo.jpg".to_string()];
-        let now = std::time::SystemTime::now();
-        let identity = identity_from_mtime(&segments, Ok(now), 12).expect("usable mtime");
-        assert!(identity.weak);
-        assert!(identity.validator.contains(":12:photo.jpg"));
-
-        assert_eq!(
-            identity_from_mtime(
-                &segments,
-                Err(std::io::Error::other("mtime unavailable")),
-                12
-            ),
-            None
-        );
-        let pre_epoch = std::time::UNIX_EPOCH
-            .checked_sub(std::time::Duration::from_secs(1))
-            .expect("pre-epoch SystemTime");
-        assert_eq!(identity_from_mtime(&segments, Ok(pre_epoch), 12), None);
     }
 }

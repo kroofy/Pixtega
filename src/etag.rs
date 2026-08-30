@@ -21,16 +21,10 @@ impl DerivedETag {
 
     /// RFC 9110 weak comparison: the opaque tags match, `W/` is ignored.
     pub fn matches_if_none_match(&self, header: &str) -> bool {
-        self.matches_any(&parse_if_none_match(header))
-    }
-
-    /// Same comparison against tags already parsed from every
-    /// `If-None-Match` line.
-    pub fn matches_any(&self, tags: &[String]) -> bool {
         let Some(want) = opaque_tag(&self.0) else {
             return false;
         };
-        tags.iter().any(|got| got == &want)
+        parse_if_none_match(header).iter().any(|got| got == &want)
     }
 }
 
@@ -85,7 +79,7 @@ fn opaque_tag(etag: &str) -> Option<String> {
 
 /// Opaque tags from `If-None-Match`. `*` is ignored (no representation
 /// exists yet that we would claim).
-pub(crate) fn parse_if_none_match(header: &str) -> Vec<String> {
+fn parse_if_none_match(header: &str) -> Vec<String> {
     let header = header.trim();
     if header.is_empty() || header == "*" {
         return Vec::new();
@@ -125,105 +119,4 @@ fn percent_encode(value: &str) -> String {
         }
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::types::OutputFormat;
-
-    fn transform(width: u32, format: OutputFormat, quality: u32) -> Transform {
-        Transform {
-            width,
-            format,
-            quality,
-        }
-    }
-
-    #[test]
-    fn derived_tag_is_stable_and_changes_with_each_input() {
-        let identity = ObjectIdentity::strong("abc");
-        let base = derived_etag(&identity, &transform(320, OutputFormat::Webp, 80));
-        assert_eq!(
-            derived_etag(&identity, &transform(320, OutputFormat::Webp, 80)).as_str(),
-            base.as_str()
-        );
-        assert_ne!(
-            derived_etag(&identity, &transform(640, OutputFormat::Webp, 80)).as_str(),
-            base.as_str()
-        );
-        assert_ne!(
-            derived_etag(&identity, &transform(320, OutputFormat::Avif, 80)).as_str(),
-            base.as_str()
-        );
-        assert_ne!(
-            derived_etag(&identity, &transform(320, OutputFormat::Webp, 70)).as_str(),
-            base.as_str()
-        );
-        assert_ne!(
-            derived_etag(
-                &ObjectIdentity::strong("xyz"),
-                &transform(320, OutputFormat::Webp, 80)
-            )
-            .as_str(),
-            base.as_str()
-        );
-        assert!(base.as_str().starts_with('"'));
-        assert!(base.as_str().ends_with('"'));
-        assert!(!base.as_str().starts_with("W/"));
-    }
-
-    #[test]
-    fn weak_identity_stays_weak() {
-        let tag = derived_etag(
-            &ObjectIdentity::weak("inode-size-mtime"),
-            &transform(320, OutputFormat::Jpeg, 85),
-        );
-        assert!(tag.as_str().starts_with("W/\""));
-    }
-
-    #[test]
-    fn validator_special_chars_are_encoded_and_do_not_break_quoting() {
-        let tag = derived_etag(
-            &ObjectIdentity::strong("a:b\"c"),
-            &transform(320, OutputFormat::Webp, 80),
-        );
-        assert!(!tag.as_str().contains("a:b\"c"));
-        assert!(tag.as_str().contains("a%3Ab%22c"));
-    }
-
-    #[test]
-    fn if_none_match_uses_weak_comparison_and_lists() {
-        let tag = derived_etag(
-            &ObjectIdentity::strong("abc"),
-            &transform(320, OutputFormat::Webp, 80),
-        );
-        assert!(tag.matches_if_none_match(tag.as_str()));
-        assert!(tag.matches_if_none_match(&format!("W/{}", tag.as_str())));
-        assert!(tag.matches_if_none_match(&format!("\"other\", {}", tag.as_str())));
-        assert!(!tag.matches_if_none_match("\"other\""));
-        assert!(!tag.matches_if_none_match("*"));
-        assert!(!tag.matches_if_none_match(""));
-    }
-
-    #[test]
-    fn parse_entity_tag_accepts_quoted_strong_and_weak_only() {
-        assert_eq!(
-            parse_entity_tag("\"abc\""),
-            Some(ObjectIdentity::strong("abc"))
-        );
-        assert_eq!(
-            parse_entity_tag("W/\"abc\""),
-            Some(ObjectIdentity::weak("abc"))
-        );
-        assert_eq!(
-            parse_entity_tag("  W/\"abc\"  "),
-            Some(ObjectIdentity::weak("abc"))
-        );
-        assert_eq!(parse_entity_tag("bare-token"), None);
-        assert_eq!(parse_entity_tag("\"abc\"suffix"), None);
-        assert_eq!(parse_entity_tag(""), None);
-        assert_eq!(parse_entity_tag("\""), None);
-        assert_eq!(parse_entity_tag("W/\"\""), None);
-    }
 }

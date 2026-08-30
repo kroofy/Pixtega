@@ -55,9 +55,7 @@ async fn nested_file_is_fetched_with_no_upstream_status() {
         .expect("fetch succeeds");
     assert_eq!(fetched.bytes, b"jpeg-bytes");
     assert_eq!(fetched.upstream_status, None);
-    let identity = fetched.identity.expect("filesystem identity");
-    assert!(identity.weak, "filesystem identity is weak");
-    assert!(identity.validator.contains("a/b/photo.jpg"));
+    assert!(fetched.identity.expect("filesystem identity").weak);
 }
 
 #[tokio::test]

@@ -141,10 +141,9 @@
       weak; filesystem identity is always weak.
       <code>If-None-Match</code> matching that tag is
       <code>304 Not Modified</code> with the same cache policy, no body,
-      and no source-body fetch or encode. Identify runs before a
-      derivation permit. A HEAD the origin refuses (other than timeout)
-      is ignored and the service fetches instead. There is no
-      <code>Last-Modified</code>. Every response — success or error — also
+      and no source-body fetch or encode. A HEAD the origin refuses
+      (other than timeout) is ignored and the service fetches instead.
+      There is no <code>Last-Modified</code>. Every response — success or error — also
       carries <code>X-Content-Type-Options: nosniff</code>,
       <code>Content-Security-Policy: default-src 'none'</code>, and
       <code>X-Frame-Options: DENY</code>.
