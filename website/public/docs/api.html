@@ -96,6 +96,7 @@
       <tbody>
         <tr><td>200 with <code>v</code></td><td><code>public, max-age=31536000, immutable</code></td></tr>
         <tr><td>200 without <code>v</code></td><td><code>public, max-age={unversioned_success_ttl_seconds}</code></td></tr>
+        <tr><td>304</td><td>same policy the matching 200 would have used</td></tr>
         <tr><td>404</td><td><code>public, max-age={not_found_ttl_seconds}</code></td></tr>
         <tr><td>every other error</td><td><code>no-store</code></td></tr>
       </tbody>
@@ -131,9 +132,19 @@
 
     <h2 id="response-headers">Response headers<a class="anchor" href="#response-headers" aria-label="Link to this section">#</a></h2>
     <p>
-      Successful responses carry the derived image's <code>Content-Type</code>
-      and the <code>Cache-Control</code> policy above. Every response — success
-      or error — also carries <code>X-Content-Type-Options: nosniff</code>,
+      Successful 200 responses carry the derived image's
+      <code>Content-Type</code>, the <code>Cache-Control</code> policy
+      above, and an <code>ETag</code> when the source exposed an object
+      identity (S3 <code>ETag</code>/<code>VersionId</code>, HTTP
+      <code>ETag</code>, or filesystem mtime+size+key). The tag combines
+      that identity with the resolved transform. Weak upstream tags stay
+      weak; filesystem identity is always weak.
+      <code>If-None-Match</code> matching that tag is
+      <code>304 Not Modified</code> with the same cache policy, no body,
+      and no source-body fetch or encode. A HEAD the origin refuses
+      (other than timeout) is ignored and the service fetches instead.
+      There is no <code>Last-Modified</code>. Every response — success or error — also
+      carries <code>X-Content-Type-Options: nosniff</code>,
       <code>Content-Security-Policy: default-src 'none'</code>, and
       <code>X-Frame-Options: DENY</code>.
     </p>

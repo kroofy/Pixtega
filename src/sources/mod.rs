@@ -16,7 +16,7 @@ use async_trait::async_trait;
 
 use crate::config::{AppConfig, SourceConfig};
 use crate::errors::{ConfigError, SourceError};
-use crate::types::{FetchedObject, UpstreamKey};
+use crate::types::{FetchedObject, IdentifiedObject, UpstreamKey};
 
 /// Limits every adapter enforces while fetching.
 #[derive(Debug, Clone, Copy)]
@@ -40,6 +40,12 @@ pub trait Source: Send + Sync {
     /// `Unavailable` (never `NotFound`), size violations are `TooLarge`,
     /// and timeouts are `Timeout`.
     async fn fetch(&self, key: &UpstreamKey) -> Result<FetchedObject, SourceError>;
+
+    /// Resolve object identity without reading bytes, for conditional
+    /// requests. `Ok(None)` means the Transport has no validator (HTTP HEAD
+    /// unsupported or no `ETag`); the caller must fetch. Failures use the
+    /// same taxonomy as [`Source::fetch`].
+    async fn identify(&self, key: &UpstreamKey) -> Result<Option<IdentifiedObject>, SourceError>;
 }
 
 /// Maps Mounts to constructed Source adapters.

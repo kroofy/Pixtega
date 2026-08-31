@@ -20,6 +20,7 @@
 pub mod app;
 pub mod config;
 pub mod errors;
+pub mod etag;
 pub mod logging;
 pub mod processor;
 pub mod request;

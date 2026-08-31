@@ -76,6 +76,7 @@ keeps its original dimensions.
 | --- | --- |
 | 200 with `v` | `public, max-age=31536000, immutable` |
 | 200 without `v` | `public, max-age={unversioned_success_ttl_seconds}` |
+| 304 | same policy the matching 200 would have used |
 | 404 | `public, max-age={not_found_ttl_seconds}` |
 | every other error | `no-store` |
 
@@ -84,6 +85,15 @@ when source bytes change; the service cannot verify this for you. The
 table shows the default `version_token = "accept"`: with `"ignore"` a 200
 with `v` uses the unversioned policy instead, and with `"reject"` any `v`
 is a 400.
+
+A 200 carries an `ETag` when the Source exposed an object identity (S3
+`ETag`/`VersionId`, HTTP `ETag`, or filesystem mtime+size+key). The tag
+is that identity plus the resolved Transform. Weak upstream tags stay
+weak; filesystem identity is always weak. A caller (or CDN) that sends
+`If-None-Match` gets `304 Not Modified` when the identity still matches,
+without a source-body fetch or encode. A HEAD the origin refuses (other
+than timeout) is ignored and the service fetches instead. No identity,
+or a mismatch, is a normal 200. There is no `Last-Modified`.
 
 ### Error taxonomy
 

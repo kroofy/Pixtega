@@ -108,10 +108,46 @@ pub struct ResolvedRequest {
     pub versioned: bool,
 }
 
+/// An upstream object validator, when the Transport exposed one.
+///
+/// `validator` is the opaque tag without quotes or a `W/` prefix.
+/// Filesystem identity is weak. Missing or pre-epoch mtime is no identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjectIdentity {
+    pub validator: String,
+    pub weak: bool,
+}
+
+impl ObjectIdentity {
+    pub fn strong(validator: impl Into<String>) -> Self {
+        ObjectIdentity {
+            validator: validator.into(),
+            weak: false,
+        }
+    }
+
+    pub fn weak(validator: impl Into<String>) -> Self {
+        ObjectIdentity {
+            validator: validator.into(),
+            weak: true,
+        }
+    }
+}
+
+/// Identity resolved without reading object bytes (`Source::identify`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdentifiedObject {
+    pub identity: ObjectIdentity,
+    pub upstream_status: Option<u16>,
+}
+
 /// Bytes successfully read from a Source, plus the upstream protocol status
 /// when the Transport has one (HTTP status for HTTP(S) and S3 adapters).
 #[derive(Debug, Clone)]
 pub struct FetchedObject {
     pub bytes: Vec<u8>,
     pub upstream_status: Option<u16>,
+    /// Present when the Transport exposed an object validator (S3 ETag,
+    /// HTTP `ETag`, or a usable filesystem mtime+size+key).
+    pub identity: Option<ObjectIdentity>,
 }

@@ -53,8 +53,21 @@ impl HttpResponse {
 }
 
 async fn send_request(addr: SocketAddr, method: &str, target: &str) -> HttpResponse {
-    let request =
-        format!("{method} {target} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+    send_request_with_headers(addr, method, target, &[]).await
+}
+
+async fn send_request_with_headers(
+    addr: SocketAddr,
+    method: &str,
+    target: &str,
+    extra_headers: &[(&str, &str)],
+) -> HttpResponse {
+    let mut request =
+        format!("{method} {target} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n");
+    for (name, value) in extra_headers {
+        request.push_str(&format!("{name}: {value}\r\n"));
+    }
+    request.push_str("\r\n");
     let raw = tokio::time::timeout(Duration::from_secs(30), async {
         let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
         stream.write_all(request.as_bytes()).await.expect("write");
@@ -132,12 +145,15 @@ async fn start_fixture(routes: HashMap<String, Script>) -> u16 {
                     }
                 }
                 let text = String::from_utf8_lossy(&head);
-                let target = text
-                    .split_whitespace()
-                    .nth(1)
-                    .unwrap_or_default()
-                    .to_string();
-                match routes.get(&target).cloned() {
+                let mut parts = text.split_whitespace();
+                let method = parts.next().unwrap_or_default();
+                let target = parts.next().unwrap_or_default().to_string();
+                let method_key = format!("{method} {target}");
+                match routes
+                    .get(&method_key)
+                    .or_else(|| routes.get(&target))
+                    .cloned()
+                {
                     Some(Script::Bytes(bytes)) => {
                         let _ = stream.write_all(&bytes).await;
                     }
@@ -160,13 +176,26 @@ async fn start_fixture(routes: HashMap<String, Script>) -> u16 {
 }
 
 fn upstream_response(status: u16, reason: &str, body: &[u8]) -> Vec<u8> {
+    upstream_response_with_headers(status, reason, body, &[])
+}
+
+fn upstream_response_with_headers(
+    status: u16,
+    reason: &str,
+    body: &[u8],
+    extra: &[(&str, &str)],
+) -> Vec<u8> {
     let mut response = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\n",
         body.len()
-    )
-    .into_bytes();
-    response.extend_from_slice(body);
-    response
+    );
+    for (name, value) in extra {
+        response.push_str(&format!("{name}: {value}\r\n"));
+    }
+    response.push_str("Connection: close\r\n\r\n");
+    let mut bytes = response.into_bytes();
+    bytes.extend_from_slice(body);
+    bytes
 }
 
 // ---------------------------------------------------------------------------
@@ -370,6 +399,13 @@ async fn versioned_success_has_content_type_immutable_policy_and_security_header
         );
         assert_security_headers(&response);
         assert!(!response.body.is_empty(), "derived image body");
+        let etag = response
+            .header("etag")
+            .expect("filesystem success has ETag");
+        assert!(
+            etag.starts_with("W/\"") && etag.ends_with('"'),
+            "weak filesystem etag, got {etag}"
+        );
     }
 }
 
@@ -386,6 +422,365 @@ async fn unversioned_success_uses_the_short_ttl_and_is_never_immutable() {
     );
     assert_security_headers(&response);
     assert_eq!(&response.body[..4], b"RIFF", "WebP container signature");
+    assert!(
+        response.header("etag").is_some(),
+        "unversioned success still has ETag"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ETag / If-None-Match
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn matching_if_none_match_is_304_without_a_body() {
+    let (_dir, addr) = spawn_filesystem_app().await;
+    let first = send_request(addr, "GET", "/images/files/photo.jpg/w320.webp").await;
+    assert_eq!(first.status, 200);
+    let etag = first.header("etag").expect("etag").to_string();
+
+    let revalidated = send_request_with_headers(
+        addr,
+        "GET",
+        "/images/files/photo.jpg/w320.webp",
+        &[("If-None-Match", &etag)],
+    )
+    .await;
+    assert_eq!(revalidated.status, 304);
+    assert!(revalidated.body.is_empty(), "304 has no body");
+    assert_eq!(revalidated.header("etag"), Some(etag.as_str()));
+    let unversioned_policy = format!("public, max-age={UNVERSIONED_TTL}");
+    assert_eq!(
+        revalidated.header("cache-control"),
+        Some(unversioned_policy.as_str())
+    );
+    assert_eq!(revalidated.header("content-type"), Some("image/webp"));
+    assert_eq!(revalidated.header("content-length"), None);
+    assert_security_headers(&revalidated);
+}
+
+#[tokio::test]
+async fn mismatched_if_none_match_rederives() {
+    let (_dir, addr) = spawn_filesystem_app().await;
+    let response = send_request_with_headers(
+        addr,
+        "GET",
+        "/images/files/photo.jpg/w320.webp",
+        &[("If-None-Match", "\"not-this-object\"")],
+    )
+    .await;
+    assert_eq!(response.status, 200);
+    assert!(!response.body.is_empty());
+    assert_ne!(response.header("etag"), Some("\"not-this-object\""));
+}
+
+#[tokio::test]
+async fn if_none_match_for_a_different_transform_does_not_304() {
+    let (_dir, addr) = spawn_filesystem_app().await;
+    let webp = send_request(addr, "GET", "/images/files/photo.jpg/w320.webp").await;
+    let etag = webp.header("etag").expect("etag").to_string();
+    let jpeg = send_request_with_headers(
+        addr,
+        "GET",
+        "/images/files/photo.jpg/w320.jpeg",
+        &[("If-None-Match", &etag)],
+    )
+    .await;
+    assert_eq!(jpeg.status, 200);
+    assert_ne!(jpeg.header("etag"), Some(etag.as_str()));
+}
+
+#[tokio::test]
+async fn head_304_matches_get_304() {
+    let (_dir, addr) = spawn_filesystem_app().await;
+    let first = send_request(addr, "GET", "/images/files/photo.jpg/w320.webp").await;
+    let etag = first.header("etag").expect("etag").to_string();
+    let headers = [("If-None-Match", etag.as_str())];
+    let get =
+        send_request_with_headers(addr, "GET", "/images/files/photo.jpg/w320.webp", &headers).await;
+    let head =
+        send_request_with_headers(addr, "HEAD", "/images/files/photo.jpg/w320.webp", &headers)
+            .await;
+    assert_eq!(get.status, 304);
+    assert_eq!(head.status, 304);
+    for header in ["content-type", "cache-control", "etag"] {
+        assert_eq!(head.header(header), get.header(header), "header {header}");
+    }
+    assert!(head.body.is_empty());
+    // GET 304 omits Content-Length. Hyper may still advertise 0 on HEAD
+    // of an empty body. Neither carries a body.
+    assert_eq!(get.header("content-length"), None);
+    assert!(
+        matches!(head.header("content-length"), None | Some("0")),
+        "HEAD 304 Content-Length {:?}",
+        head.header("content-length")
+    );
+    assert_security_headers(&head);
+}
+
+#[tokio::test]
+async fn if_none_match_on_a_missing_object_is_still_404() {
+    let (_dir, addr) = spawn_filesystem_app().await;
+    let response = send_request_with_headers(
+        addr,
+        "GET",
+        "/images/files/gone.jpg/w320.webp",
+        &[("If-None-Match", "\"anything\"")],
+    )
+    .await;
+    assert_eq!(response.status, 404);
+    let not_found_policy = format!("public, max-age={NOT_FOUND_TTL}");
+    assert_eq!(
+        response.header("cache-control"),
+        Some(not_found_policy.as_str())
+    );
+}
+
+#[tokio::test]
+async fn http_origin_without_etag_never_304s() {
+    let jpeg = jpeg_fixture(64, 64);
+    let port = start_fixture(HashMap::from([(
+        "/plain.jpg".to_string(),
+        Script::Bytes(upstream_response(200, "OK", &jpeg)),
+    )]))
+    .await;
+    let addr = spawn_app(test_config(vec![http_source(port)], 10_000)).await;
+    let first = send_request(addr, "GET", "/images/pics/plain.jpg/w320.webp").await;
+    assert_eq!(first.status, 200);
+    assert_eq!(first.header("etag"), None);
+
+    let again = send_request_with_headers(
+        addr,
+        "GET",
+        "/images/pics/plain.jpg/w320.webp",
+        &[("If-None-Match", "\"1:320:webp:82:nope\"")],
+    )
+    .await;
+    assert_eq!(again.status, 200);
+    assert!(!again.body.is_empty());
+    assert_eq!(again.header("etag"), None);
+}
+
+#[tokio::test]
+async fn http_origin_etag_revalidates_via_head() {
+    let jpeg = jpeg_fixture(64, 64);
+    let port = start_fixture(HashMap::from([(
+        "/versioned.jpg".to_string(),
+        Script::Bytes(upstream_response_with_headers(
+            200,
+            "OK",
+            &jpeg,
+            &[("ETag", "\"upstream-1\"")],
+        )),
+    )]))
+    .await;
+    let addr = spawn_app(test_config(vec![http_source(port)], 10_000)).await;
+    let first = send_request(addr, "GET", "/images/pics/versioned.jpg/w320.webp").await;
+    assert_eq!(first.status, 200);
+    let etag = first
+        .header("etag")
+        .expect("etag from upstream identity")
+        .to_string();
+    assert!(etag.starts_with('"'), "strong upstream tag stays strong");
+
+    let revalidated = send_request_with_headers(
+        addr,
+        "GET",
+        "/images/pics/versioned.jpg/w320.webp",
+        &[("If-None-Match", &etag)],
+    )
+    .await;
+    assert_eq!(revalidated.status, 304);
+    assert!(revalidated.body.is_empty());
+    assert_eq!(revalidated.header("etag"), Some(etag.as_str()));
+}
+
+#[tokio::test]
+async fn weak_upstream_etag_stays_weak_on_the_derived_tag() {
+    let jpeg = jpeg_fixture(64, 64);
+    let port = start_fixture(HashMap::from([(
+        "/weak.jpg".to_string(),
+        Script::Bytes(upstream_response_with_headers(
+            200,
+            "OK",
+            &jpeg,
+            &[("ETag", "W/\"inode-1\"")],
+        )),
+    )]))
+    .await;
+    let addr = spawn_app(test_config(vec![http_source(port)], 10_000)).await;
+    let first = send_request(addr, "GET", "/images/pics/weak.jpg/w320.webp").await;
+    assert_eq!(first.status, 200);
+    let etag = first.header("etag").expect("weak derived etag");
+    assert!(etag.starts_with("W/\""), "got {etag}");
+
+    let revalidated = send_request_with_headers(
+        addr,
+        "GET",
+        "/images/pics/weak.jpg/w320.webp",
+        &[("If-None-Match", etag)],
+    )
+    .await;
+    assert_eq!(revalidated.status, 304);
+}
+
+#[tokio::test]
+async fn matching_if_none_match_skips_saturated_derivation_permits() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("photo.jpg"), jpeg_fixture(64, 64)).unwrap();
+    let mut config = test_config(vec![filesystem_source(dir.path())], 10_000);
+    config.max_concurrent_derivations = 1;
+
+    let first_done = Arc::new(AtomicBool::new(false));
+    let occupying = Arc::new(AtomicBool::new(false));
+    let release = Arc::new(AtomicBool::new(false));
+    let process: ProcessFn = {
+        let first_done = first_done.clone();
+        let occupying = occupying.clone();
+        let release = release.clone();
+        Arc::new(move |_bytes, _transform, _megapixels| {
+            if !first_done.swap(true, Ordering::SeqCst) {
+                return Ok(vec![0u8; 8]);
+            }
+            occupying.store(true, Ordering::SeqCst);
+            while !release.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(vec![0u8; 8])
+        })
+    };
+    let (addr, state) = spawn_app_with_processor(config, process).await;
+
+    let first = send_request(addr, "GET", "/images/files/photo.jpg/w320.webp").await;
+    assert_eq!(first.status, 200);
+    let etag = first.header("etag").expect("etag").to_string();
+
+    let occupy = tokio::spawn(async move {
+        send_request(addr, "GET", "/images/files/photo.jpg/w640.webp").await
+    });
+    let wait = tokio::time::Instant::now() + Duration::from_secs(2);
+    while !occupying.load(Ordering::SeqCst) {
+        assert!(
+            tokio::time::Instant::now() <= wait,
+            "second request must enter process"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert_eq!(state.derivation_permits.available_permits(), 0);
+
+    let started = std::time::Instant::now();
+    let revalidated = send_request_with_headers(
+        addr,
+        "GET",
+        "/images/files/photo.jpg/w320.webp",
+        &[("If-None-Match", etag.as_str())],
+    )
+    .await;
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "304 must not wait for a permit, took {:?}",
+        started.elapsed()
+    );
+    assert_eq!(revalidated.status, 304);
+    assert_eq!(revalidated.header("etag"), Some(etag.as_str()));
+
+    release.store(true, Ordering::SeqCst);
+    let occupied = occupy.await.expect("join");
+    assert_eq!(occupied.status, 200);
+}
+
+fn http_origin_with_head_script(
+    path: &str,
+    head: Script,
+    get_body: &[u8],
+    etag: &str,
+) -> HashMap<String, Script> {
+    HashMap::from([
+        (format!("HEAD {path}"), head),
+        (
+            path.to_string(),
+            Script::Bytes(upstream_response_with_headers(
+                200,
+                "OK",
+                get_body,
+                &[("ETag", etag)],
+            )),
+        ),
+    ])
+}
+
+#[tokio::test]
+async fn identify_head_403_falls_through_to_get() {
+    let jpeg = jpeg_fixture(64, 64);
+    let port = start_fixture(http_origin_with_head_script(
+        "/photo.jpg",
+        Script::Bytes(upstream_response(403, "Forbidden", b"denied")),
+        &jpeg,
+        "\"abc\"",
+    ))
+    .await;
+    let process: ProcessFn = Arc::new(|_bytes, _transform, _megapixels| Ok(vec![0u8; 8]));
+    let (addr, _state) =
+        spawn_app_with_processor(test_config(vec![http_source(port)], 10_000), process).await;
+    let response = send_request_with_headers(
+        addr,
+        "GET",
+        "/images/pics/photo.jpg/w320.webp",
+        &[("If-None-Match", "\"not-this\"")],
+    )
+    .await;
+    assert_eq!(response.status, 200, "HEAD 403 must not become the answer");
+    let etag = response.header("etag").expect("etag from GET");
+    assert!(etag.starts_with('"'), "got {etag}");
+}
+
+#[tokio::test]
+async fn identify_head_404_falls_through_to_get() {
+    let jpeg = jpeg_fixture(64, 64);
+    let port = start_fixture(http_origin_with_head_script(
+        "/photo.jpg",
+        Script::Bytes(upstream_response(404, "Not Found", b"gone")),
+        &jpeg,
+        "\"abc\"",
+    ))
+    .await;
+    let process: ProcessFn = Arc::new(|_bytes, _transform, _megapixels| Ok(vec![0u8; 8]));
+    let (addr, _state) =
+        spawn_app_with_processor(test_config(vec![http_source(port)], 10_000), process).await;
+    let response = send_request_with_headers(
+        addr,
+        "GET",
+        "/images/pics/photo.jpg/w320.webp",
+        &[("If-None-Match", "\"not-this\"")],
+    )
+    .await;
+    assert_eq!(
+        response.status, 200,
+        "HEAD 404 must not become a cacheable miss"
+    );
+}
+
+#[tokio::test]
+async fn identify_timeout_is_still_504() {
+    let jpeg = jpeg_fixture(64, 64);
+    let port = start_fixture(http_origin_with_head_script(
+        "/slow.jpg",
+        Script::Stall,
+        &jpeg,
+        "\"abc\"",
+    ))
+    .await;
+    let addr = spawn_app(test_config(vec![http_source(port)], 300)).await;
+    let response = send_request_with_headers(
+        addr,
+        "GET",
+        "/images/pics/slow.jpg/w320.webp",
+        &[("If-None-Match", "\"anything\"")],
+    )
+    .await;
+    assert_eq!(response.status, 504);
+    assert_no_store(&response);
+    assert_error_body(&response);
 }
 
 // ---------------------------------------------------------------------------
@@ -749,7 +1144,7 @@ async fn head_on_a_valid_derived_url_matches_get_with_an_empty_body() {
         let head = send_request(addr, "HEAD", target).await;
         assert_eq!(get.status, 200, "target {target}");
         assert_eq!(head.status, 200, "target {target}");
-        for header in ["content-type", "cache-control"] {
+        for header in ["content-type", "cache-control", "etag"] {
             assert_eq!(
                 head.header(header),
                 get.header(header),

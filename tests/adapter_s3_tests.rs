@@ -14,7 +14,7 @@ use pixtega::config::S3SourceConfig;
 use pixtega::errors::SourceError;
 use pixtega::sources::s3::S3Source;
 use pixtega::sources::{FetchLimits, Source};
-use pixtega::types::UpstreamKey;
+use pixtega::types::{ObjectIdentity, UpstreamKey};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use url::Url;
@@ -40,6 +40,7 @@ fn setup_test_credentials() {
 
 #[derive(Debug, Clone)]
 struct Recorded {
+    method: String,
     path: String,
     query: Option<String>,
 }
@@ -172,12 +173,18 @@ async fn read_request(stream: &mut tokio::net::TcpStream) -> Option<Recorded> {
     }
     let text = String::from_utf8_lossy(&head);
     let request_line = text.split("\r\n").next()?;
-    let target = request_line.split_whitespace().nth(1)?;
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next()?.to_string();
+    let target = parts.next()?;
     let (path, query) = match target.split_once('?') {
         Some((p, q)) => (p.to_string(), Some(q.to_string())),
         None => (target.to_string(), None),
     };
-    Some(Recorded { path, query })
+    Some(Recorded {
+        method,
+        path,
+        query,
+    })
 }
 
 fn xml_error(status: u16, code: &str, message: &str) -> Vec<u8> {
@@ -199,8 +206,12 @@ fn xml_error(status: u16, code: &str, message: &str) -> Vec<u8> {
 }
 
 fn object_response(body: &[u8]) -> Vec<u8> {
+    object_response_with_etag(body, "\"test-etag\"")
+}
+
+fn object_response_with_etag(body: &[u8], etag: &str) -> Vec<u8> {
     let mut response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nETag: {etag}\r\nConnection: close\r\n\r\n",
         body.len()
     )
     .into_bytes();
@@ -576,4 +587,80 @@ async fn body_that_stalls_mid_stream_maps_to_timeout() {
         matches!(err, SourceError::Timeout),
         "expected Timeout, got {err:?}"
     );
+}
+
+#[tokio::test]
+async fn fetch_captures_etag() {
+    let fake = FakeS3::start(HashMap::from([(
+        format!("/{BUCKET}/photo.jpg"),
+        Script::Bytes(object_response(b"object-bytes")),
+    )]))
+    .await;
+    let source = adapter(&fake, default_limits()).await;
+    let fetched = source.fetch(&key(&["photo.jpg"])).await.unwrap();
+    assert_eq!(fetched.identity, Some(ObjectIdentity::strong("test-etag")));
+}
+
+#[tokio::test]
+async fn fetch_captures_weak_etag() {
+    let fake = FakeS3::start(HashMap::from([(
+        format!("/{BUCKET}/photo.jpg"),
+        Script::Bytes(object_response_with_etag(b"object-bytes", "W/\"inode\"")),
+    )]))
+    .await;
+    let source = adapter(&fake, default_limits()).await;
+    let fetched = source.fetch(&key(&["photo.jpg"])).await.unwrap();
+    assert_eq!(fetched.identity, Some(ObjectIdentity::weak("inode")));
+}
+
+#[tokio::test]
+async fn identify_uses_head_and_returns_etag() {
+    let fake = FakeS3::start(HashMap::from([(
+        format!("/{BUCKET}/photo.jpg"),
+        Script::Bytes(object_response(b"ignored")),
+    )]))
+    .await;
+    let source = adapter(&fake, default_limits()).await;
+    let identified = source
+        .identify(&key(&["photo.jpg"]))
+        .await
+        .expect("identify succeeds")
+        .expect("etag present");
+    assert_eq!(identified.identity, ObjectIdentity::strong("test-etag"));
+    assert_eq!(identified.upstream_status, Some(200));
+    assert_eq!(fake.recorded()[0].method, "HEAD");
+}
+
+#[tokio::test]
+async fn identify_no_such_key_is_not_found() {
+    let fake = FakeS3::start(HashMap::from([(
+        format!("/{BUCKET}/missing.jpg"),
+        Script::Bytes(xml_error(404, "NoSuchKey", "gone")),
+    )]))
+    .await;
+    let source = adapter(&fake, default_limits()).await;
+    let err = source.identify(&key(&["missing.jpg"])).await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            SourceError::NotFound {
+                upstream_status: Some(404)
+            }
+        ),
+        "got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn identify_advertised_length_over_limit_is_too_large() {
+    let head =
+        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 100000\r\nETag: \"big\"\r\nConnection: close\r\n\r\n";
+    let fake = FakeS3::start(HashMap::from([(
+        format!("/{BUCKET}/huge.jpg"),
+        Script::Bytes(head.as_bytes().to_vec()),
+    )]))
+    .await;
+    let source = adapter(&fake, limits(1024, Duration::from_secs(10))).await;
+    let err = source.identify(&key(&["huge.jpg"])).await.unwrap_err();
+    assert!(matches!(err, SourceError::TooLarge { .. }), "got {err:?}");
 }

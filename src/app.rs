@@ -8,17 +8,18 @@ use std::time::{Duration, Instant};
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::response::Builder;
-use axum::http::{header, HeaderValue, Method, StatusCode, Uri};
+use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
 use tokio::sync::Semaphore;
 
 use crate::config::AppConfig;
-use crate::errors::{Outcome, ProcessError, RequestError};
+use crate::errors::{Outcome, ProcessError, RequestError, SourceError};
+use crate::etag::derived_etag;
 use crate::logging::{CompletionEvent, SourceErrorEvent};
 use crate::processor;
 use crate::request::parse_request;
 use crate::sources::SourceRegistry;
-use crate::types::{OutputFormat, ResolvedRequest, Transform};
+use crate::types::{ObjectIdentity, OutputFormat, ResolvedRequest, Transform};
 
 /// The synchronous processing function run on a blocking thread. The real
 /// pipeline is [`processor::process_image`]; tests may substitute a slow or
@@ -144,8 +145,12 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
     // Only the request line matters; the body (never read) is not Sync and
     // must not be captured across await points.
     let (parts, _body) = request.into_parts();
-    let (response, report) = respond(&state, &parts.method, &parts.uri).await;
-    let response = if parts.method == Method::HEAD {
+    let (response, report) = respond(&state, &parts.method, &parts.uri, &parts.headers).await;
+    // 304 already has an empty body. Rebuilding it through `drop_body`
+    // would advertise `Content-Length: 0`, which the matching GET 304
+    // does not.
+    let response = if parts.method == Method::HEAD && response.status() != StatusCode::NOT_MODIFIED
+    {
         drop_body(response).await
     } else {
         response
@@ -164,7 +169,12 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
     response
 }
 
-async fn respond(state: &AppState, method: &Method, uri: &Uri) -> (Response, Report) {
+async fn respond(
+    state: &AppState,
+    method: &Method,
+    uri: &Uri,
+    headers: &HeaderMap,
+) -> (Response, Report) {
     // The whole-request budget. Waiting for a derivation permit, fetching
     // the Source Object, and processing all spend from this one deadline,
     // so an operator can keep the service's own answer (a real 504 with
@@ -212,6 +222,43 @@ async fn respond(state: &AppState, method: &Method, uri: &Uri) -> (Response, Rep
         let response = error_response(state, StatusCode::INTERNAL_SERVER_ERROR, "internal error");
         return (response, report);
     };
+
+    // Identify before the permit so a matching revalidation can 304
+    // while encodes occupy every slot. Non-timeout identify errors
+    // fall through: a WAF that blocks HEAD must not become the answer.
+    if let Some(if_none_match) = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+    {
+        match tokio::time::timeout_at(deadline, source.identify(&resolved.upstream_key)).await {
+            Ok(Ok(Some(identified))) => {
+                report.upstream_status = identified.upstream_status;
+                let etag = derived_etag(&identified.identity, &resolved.transform);
+                if etag.matches_if_none_match(if_none_match) {
+                    return (
+                        not_modified_response(state, &resolved, &identified.identity),
+                        report,
+                    );
+                }
+            }
+            Ok(Ok(None)) => {}
+            Ok(Err(SourceError::Timeout)) => {
+                report.outcome = Outcome::Timeout;
+                let response = error_response(
+                    state,
+                    StatusCode::GATEWAY_TIMEOUT,
+                    SourceError::Timeout.public_message(),
+                );
+                return (response, report);
+            }
+            Ok(Err(err)) => {
+                if let Some(detail) = err.detail() {
+                    SourceErrorEvent::new(detail).emit();
+                }
+            }
+            Err(_elapsed) => return timeout_response(state, report),
+        }
+    }
 
     // One process-wide permit bounds fetching AND processing together. It
     // is owned so it can ride with the blocking work below and be released
@@ -289,7 +336,10 @@ async fn respond(state: &AppState, method: &Method, uri: &Uri) -> (Response, Rep
     };
     report.output_bytes = Some(derived.len() as u64);
 
-    (success_response(state, &resolved, derived), report)
+    (
+        success_response(state, &resolved, derived, fetched.identity.as_ref()),
+        report,
+    )
 }
 
 /// The request ran out of its `request_timeout_ms` budget: a real 504
@@ -328,24 +378,58 @@ fn security_headers(builder: Builder) -> Builder {
         .header(header::X_FRAME_OPTIONS, "DENY")
 }
 
-fn success_response(state: &AppState, resolved: &ResolvedRequest, body: Vec<u8>) -> Response {
-    let cache_control = if resolved.versioned {
+fn cache_control_value(state: &AppState, resolved: &ResolvedRequest) -> String {
+    if resolved.versioned {
         "public, max-age=31536000, immutable".to_string()
     } else {
         format!(
             "public, max-age={}",
             state.config.unversioned_success_ttl_seconds
         )
-    };
-    let builder = Response::builder()
+    }
+}
+
+fn etag_header(identity: &ObjectIdentity, resolved: &ResolvedRequest) -> HeaderValue {
+    HeaderValue::from_str(derived_etag(identity, &resolved.transform).as_str())
+        .expect("derived etag is ASCII")
+}
+
+fn success_response(
+    state: &AppState,
+    resolved: &ResolvedRequest,
+    body: Vec<u8>,
+    identity: Option<&ObjectIdentity>,
+) -> Response {
+    let mut builder = Response::builder()
         .status(StatusCode::OK)
         .header(
             header::CONTENT_TYPE,
             resolved.transform.format.content_type(),
         )
-        .header(header::CACHE_CONTROL, cache_control);
+        .header(header::CACHE_CONTROL, cache_control_value(state, resolved));
+    if let Some(identity) = identity {
+        builder = builder.header(header::ETAG, etag_header(identity, resolved));
+    }
     security_headers(builder)
         .body(Body::from(body))
+        .expect("static header set is always valid")
+}
+
+fn not_modified_response(
+    state: &AppState,
+    resolved: &ResolvedRequest,
+    identity: &ObjectIdentity,
+) -> Response {
+    let builder = Response::builder()
+        .status(StatusCode::NOT_MODIFIED)
+        .header(
+            header::CONTENT_TYPE,
+            resolved.transform.format.content_type(),
+        )
+        .header(header::CACHE_CONTROL, cache_control_value(state, resolved))
+        .header(header::ETAG, etag_header(identity, resolved));
+    security_headers(builder)
+        .body(Body::empty())
         .expect("static header set is always valid")
 }
 
