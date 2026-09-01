@@ -261,7 +261,7 @@ jobs:
 
       # No npm cache here on purpose: release builds should not trust a
       # shared cache (the npm trusted-publishing docs say the same).
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
