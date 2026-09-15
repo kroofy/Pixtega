@@ -51,9 +51,11 @@ is in [docs/semantic-mutants.md](docs/semantic-mutants.md).
 ## CI
 
 Every PR runs the CI workflow ([docs/ci.md](docs/ci.md)): the `check` job
-is `./scripts/check.sh` verbatim and the `container` job is
-`./scripts/container-acceptance.sh` verbatim, so a green local run means a
-green CI run. The project mutation-score threshold (≥ 90%) is enforced by
+is `./scripts/check.sh` verbatim, `audit` is `cargo-audit` on
+`Cargo.lock`, and the `container` job is
+`./scripts/container-acceptance.sh` verbatim. A green local `check.sh`
+still matches the check job; audit is CI-only unless you install
+`cargo-audit`. The project mutation-score threshold (≥ 90%) is enforced by
 the separate Mutants workflow (weekly on `main` + manual dispatch — it
 takes hours, so it does not gate PRs); after merging behavior changes,
 trigger it from the Actions tab to refresh the recorded score. Releases

@@ -18,3 +18,27 @@ updates:
       github-actions:
         patterns:
           - "*"
+
+  # js/ is the npm workspace (pixtega + @pixtega/url) with a real lockfile.
+  # website/ deploys via `npx wrangler` and has no package.json.
+  - package-ecosystem: "npm"
+    directory: "/js"
+    schedule:
+      interval: "weekly"
+    groups:
+      npm-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Both Dockerfile and Dockerfile.lambda live at the repo root (Dependabot
+  # matches any filename containing "Dockerfile"). Group so ubuntu tag/digest
+  # churn and the Lambda Web Adapter pin land in one PR, not one each.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      docker-images:
+        patterns:
+          - "*"

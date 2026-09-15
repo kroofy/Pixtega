@@ -8,13 +8,18 @@ deploy also needs two repo secrets (`CLOUDFLARE_API_TOKEN`,
 
 ## CI (`.github/workflows/ci.yml`)
 
-Runs on every pull request and every push to `main`. Two jobs:
+Runs on every pull request and every push to `main`. Three jobs:
 
 - **check** — `./scripts/check.sh` verbatim: `cargo fmt --check`,
   `cargo clippy -D warnings`, `cargo test` (unit + integration), on the
   toolchain pinned by [rust-toolchain.toml](../rust-toolchain.toml)
   (rustup installs the pin; CI cannot drift from it). Cargo registry and
   build artifacts are cached with `Swatinem/rust-cache`.
+- **audit** — `cargo-audit` against `Cargo.lock`. Known RustSec
+  advisories for production dependencies fail the job. Installed with
+  `taiki-e/install-action` (same as `cargo-machete`); no compile, so no
+  libvips. Intentional ignores, if any, live in a checked-in
+  `.cargo/audit.toml` with a reason — there is none today.
 - **container** — builds the repository Dockerfile via buildx with
   GitHub Actions layer caching (`cache-from/cache-to: type=gha,mode=max`),
   then runs `./scripts/container-acceptance.sh` with `PIXTEGA_SKIP_BUILD=1`
@@ -25,10 +30,34 @@ Runs on every pull request and every push to `main`. Two jobs:
   re-caches. Run locally without any env vars — the script then builds
   the image itself.
 
-Both jobs run on `ubuntu-26.04` pinned (not `ubuntu-latest`): resolute's
+All three jobs run on `ubuntu-26.04` pinned (not `ubuntu-latest`): resolute's
 libvips 8.18 matches the pinned `libvips = "=2.3.0"` bindings and its
 libheif ships the aom AV1 encoder plugin needed for AVIF — the same
 reasoning as the Dockerfile base image.
+
+## Dependabot and what it does not cover
+
+[`.github/dependabot.yml`](../.github/dependabot.yml) opens version-update
+PRs for:
+
+- **cargo** (weekly, minor/patch grouped) — crates in `Cargo.lock`
+- **github-actions** (monthly, one grouped PR)
+- **npm** (weekly, minor/patch grouped) — the `js/` workspace lockfile
+  (`typescript` today). `website/` has no `package.json`; wrangler is
+  invoked as `npx wrangler@4` and is not a Dependabot target.
+- **docker** (weekly, one grouped PR) — `FROM` tags in [Dockerfile](../Dockerfile)
+  and [Dockerfile.lambda](../Dockerfile.lambda) (`ubuntu:26.04` and the
+  AWS Lambda Web Adapter image). Grouped so tag/digest churn is one PR,
+  not one per file.
+
+Cargo Dependabot does not see native packages or image rebuilds. Ubuntu
+apt security updates for **libvips**, **libheif**, and the **aom**
+plugins land only when the image is rebuilt against current
+`ubuntu:26.04`. The Lambda Web Adapter pin
+(`public.ecr.aws/awsguru/aws-lambda-adapter:1.0.1` in
+`Dockerfile.lambda`) is on Docker Dependabot's `FROM` list, but adapter
+releases and distro advisories still need a human watch: bump the pin
+and/or rebuild/retag when those matter.
 
 ## Mutation score (`.github/workflows/mutants.yml`)
 
