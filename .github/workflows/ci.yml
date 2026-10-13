@@ -1,10 +1,13 @@
 # Fast correctness gate for every PR and every push to main.
 #
-# Two jobs:
+# Three jobs:
 #   check     - exactly ./scripts/check.sh (fmt --check, clippy -D warnings
 #               which also denies rustc dead_code/unused lints, cargo-machete
 #               unused-dependency scan, unit + integration tests) on the
 #               toolchain pinned by rust-toolchain.toml.
+#   audit     - cargo audit against Cargo.lock (known advisories on
+#               production deps fail the job). Binary from
+#               taiki-e/install-action, same as cargo-machete.
 #   container - Docker build of the repository Dockerfile (buildx with GHA
 #               layer caching), then ./scripts/container-acceptance.sh with
 #               PIXTEGA_SKIP_BUILD=1 (run image + curl smoke test).
@@ -66,6 +69,23 @@ jobs:
 
       - name: check.sh (fmt, clippy, machete, tests)
         run: ./scripts/check.sh
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # cargo-audit is a standalone binary; it reads Cargo.lock and does
+      # not compile the crate, so no libvips, rust-toolchain, or rust-cache.
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: cargo audit
+        run: cargo-audit audit
 
   container:
     name: container acceptance
