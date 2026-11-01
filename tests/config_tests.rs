@@ -6,7 +6,10 @@
 
 use std::path::Path;
 
-use pixtega::config::{load_from_file, load_from_str, AppConfig, SourceConfig, VersionTokenMode};
+use pixtega::config::{
+    is_private_or_local_destination, load_from_file, load_from_str, AppConfig, SourceConfig,
+    VersionTokenMode,
+};
 use pixtega::errors::ConfigError;
 use pixtega::types::OutputFormat;
 
@@ -843,6 +846,24 @@ fn s3_endpoint_url_destination_policy_matches_the_http_one() {
 
 /// The opt-in only makes sense where an upstream URL exists: never on
 /// filesystem sources, and only next to `endpoint_url` on s3 sources.
+#[test]
+fn public_ipv4_destinations_are_not_private() {
+    for (host, private) in [
+        ("8.8.8.8", false),
+        ("100.63.255.255", false),
+        ("100.128.0.1", false),
+        ("99.64.0.1", false),
+        ("100.1.0.1", false),
+        ("100.64.0.1", true),
+        ("100.127.255.255", true),
+        ("169.254.169.254", true),
+        ("10.0.0.1", true),
+    ] {
+        let url = url::Url::parse(&format!("http://{host}/")).unwrap();
+        assert_eq!(is_private_or_local_destination(&url), private, "{host}");
+    }
+}
+
 #[test]
 fn allow_private_destinations_requires_an_upstream_url() {
     let on_filesystem = filesystem_source("allow_private_destinations = true\n");

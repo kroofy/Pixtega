@@ -624,6 +624,14 @@ async fn weak_upstream_etag_stays_weak_on_the_derived_tag() {
     assert_eq!(revalidated.status, 304);
 }
 
+struct ReleaseOnDrop(Arc<AtomicBool>);
+
+impl Drop for ReleaseOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
 #[tokio::test]
 async fn matching_if_none_match_skips_saturated_derivation_permits() {
     let dir = tempfile::tempdir().unwrap();
@@ -668,14 +676,22 @@ async fn matching_if_none_match_skips_saturated_derivation_permits() {
     }
     assert_eq!(state.derivation_permits.available_permits(), 0);
 
+    // A request that misses the 304 path queues for the permit held above,
+    // so bound the wait and free the permit on failure; otherwise a broken
+    // 304 path hangs the test binary instead of failing it.
+    let _release_on_exit = ReleaseOnDrop(release.clone());
     let started = std::time::Instant::now();
-    let revalidated = send_request_with_headers(
-        addr,
-        "GET",
-        "/images/files/photo.jpg/w320.webp",
-        &[("If-None-Match", etag.as_str())],
+    let revalidated = tokio::time::timeout(
+        Duration::from_secs(5),
+        send_request_with_headers(
+            addr,
+            "GET",
+            "/images/files/photo.jpg/w320.webp",
+            &[("If-None-Match", etag.as_str())],
+        ),
     )
-    .await;
+    .await
+    .expect("304 must not wait for a permit");
     assert!(
         started.elapsed() < Duration::from_millis(500),
         "304 must not wait for a permit, took {:?}",

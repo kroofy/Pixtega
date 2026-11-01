@@ -33,6 +33,12 @@ on:
 permissions:
   contents: read
 
+# Two parallel mutant build trees with full debuginfo exhaust the runner's
+# disk within minutes ("Disk quota exceeded"), and cargo-mutants then records
+# every mutant whose build fails as unviable. Nothing here needs debuginfo.
+env:
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
 jobs:
   mutants:
     name: cargo mutants (full suite, scored)
@@ -67,10 +73,12 @@ jobs:
       # failure, internal error) fails immediately.
       - name: Run cargo mutants
         run: |
+          df -h /tmp
           set +e
           cargo mutants --jobs 2
           code=$?
           set -e
+          df -h /tmp
           case "$code" in
             0|2|3) echo "cargo mutants finished (exit $code); scoring next" ;;
             *) echo "cargo mutants infrastructure/baseline failure (exit $code)" >&2

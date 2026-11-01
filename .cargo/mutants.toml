@@ -32,6 +32,11 @@ exclude_re = [
     # limit and the returned bytes (64 + 1024 = 1088 is merely slower).
     # The `*`->`/` variant (a zero-sized chunk) IS caught by tests.
     "filesystem\\.rs.*replace \\* with \\+",
+    # etag.rs parse_if_none_match `header.is_empty() || header == "*"`: the
+    # early return is a shortcut; the loop below yields no tags for both
+    # inputs anyway (an empty header never enters it, `*` has no opening
+    # quote), so never taking the shortcut is not observable.
+    "etag\\.rs.*replace \\|\\| with && in parse_if_none_match",
 ]
 
 # Known-equivalent mutants that CANNOT be excluded, documented here and

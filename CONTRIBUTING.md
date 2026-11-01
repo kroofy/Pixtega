@@ -59,8 +59,8 @@ still matches the check job; audit is CI-only unless you install
 the separate Mutants workflow (weekly on `main` + manual dispatch — it
 takes hours, so it does not gate PRs); after merging behavior changes,
 trigger it from the Actions tab to refresh the recorded score. Releases
-are cut with `git tag vX.Y.Z && git push origin vX.Y.Z`; see
-[docs/ci.md](docs/ci.md).
+are cut by setting both `js/` package versions to `X.Y.Z`, then
+`git tag vX.Y.Z && git push origin vX.Y.Z`; see [docs/ci.md](docs/ci.md).
 
 ## Pull request expectations
 

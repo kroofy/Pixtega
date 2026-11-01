@@ -1,8 +1,9 @@
 # Release pipeline. Cutting a release:
 #
-#   git tag vX.Y.Z && git push origin vX.Y.Z
+#   1. set js/pixtega and js/url package.json to X.Y.Z on main
+#   2. git tag vX.Y.Z && git push origin vX.Y.Z
 #
-# On a v* tag this workflow:
+# On a v* tag this workflow (stopping first if the versions do not match):
 #   1. builds and pushes multi-arch (linux/amd64 + linux/arm64) OCI images
 #      to ghcr.io/kroofy/pixtega
 #        - Dockerfile        -> X.Y.Z, X.Y, latest
@@ -50,8 +51,32 @@ env:
   IMAGE: ghcr.io/kroofy/pixtega
 
 jobs:
+  # Runs first so a tag whose package.json versions were not bumped stops the
+  # release before any image is pushed, rather than leaving images without
+  # matching npm packages or a GitHub Release.
+  preflight:
+    name: tag matches package versions
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check tag matches package versions
+        if: github.event_name == 'push'
+        working-directory: js
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          for PKG in pixtega url; do
+            PKG_VERSION="$(node -p "require('./${PKG}/package.json').version")"
+            if [ "${PKG_VERSION}" != "${TAG_VERSION}" ]; then
+              echo "js/${PKG} is ${PKG_VERSION} but the tag is v${TAG_VERSION}" >&2
+              exit 1
+            fi
+          done
+
   binary:
     name: release binary + checksums
+    needs: preflight
     runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
@@ -102,6 +127,7 @@ jobs:
   # the digests into the tagged multi-arch manifest lists.
   image:
     name: image build (${{ matrix.arch }})
+    needs: preflight
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
@@ -248,6 +274,7 @@ jobs:
 
   npm:
     name: npm packages
+    needs: preflight
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
@@ -273,18 +300,6 @@ jobs:
       - run: npm ci
 
       - run: npm test
-
-      - name: Check tag matches package versions
-        if: github.event_name == 'push'
-        run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          for PKG in pixtega url; do
-            PKG_VERSION="$(node -p "require('./${PKG}/package.json').version")"
-            if [ "${PKG_VERSION}" != "${TAG_VERSION}" ]; then
-              echo "js/${PKG} is ${PKG_VERSION} but the tag is v${TAG_VERSION}" >&2
-              exit 1
-            fi
-          done
 
       - name: Pack and dry-run publish (rehearsal)
         if: github.event_name != 'push'

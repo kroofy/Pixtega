@@ -30,6 +30,7 @@ import sys
 THRESHOLD_PERCENT = 90.0
 OUT_DIR = pathlib.Path("mutants.out")
 SCORE_FILE = pathlib.Path("mutants-score.json")
+DISK_ERROR_MARKERS = ("os error 122", "os error 28", "Disk quota exceeded", "No space left")
 
 
 def count_lines(name: str) -> int:
@@ -62,6 +63,28 @@ def git_sha() -> str:
     ).stdout.strip()
 
 
+def disk_failed_unviable_mutants() -> int:
+    """Count "unviable" mutants whose build actually died on a full disk.
+
+    cargo-mutants records any failed build as unviable, and unviable mutants
+    leave the denominator, so a disk that fills mid-run silently drops mutants
+    from the score instead of failing it.
+
+    Returns:
+        Number of unviable outcomes whose build log reports a disk error.
+    """
+    outcomes = json.loads((OUT_DIR / "outcomes.json").read_text())["outcomes"]
+    logs = [o["log_path"] for o in outcomes if o["summary"] == "Unviable"]
+    return sum(
+        1
+        for log in logs
+        if any(
+            marker in (OUT_DIR / log).read_text(errors="replace")
+            for marker in DISK_ERROR_MARKERS
+        )
+    )
+
+
 def main() -> int:
     """Score a cargo-mutants run against the project threshold.
 
@@ -74,6 +97,15 @@ def main() -> int:
     """
     if not OUT_DIR.is_dir():
         print(f"error: {OUT_DIR}/ not found; did cargo mutants run?", file=sys.stderr)
+        return 1
+
+    disk_failed = disk_failed_unviable_mutants()
+    if disk_failed:
+        print(
+            f"error: {disk_failed} mutants were recorded as unviable because the "
+            "runner ran out of disk; refusing to report a score",
+            file=sys.stderr,
+        )
         return 1
 
     caught = count_lines("caught.txt")

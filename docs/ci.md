@@ -102,13 +102,15 @@ as long as it fits.
 
 ## Releases (`.github/workflows/release.yml`)
 
-Cut a release by pushing a semver tag:
+Cut a release by setting the version in `js/pixtega/package.json` and
+`js/url/package.json` to `X.Y.Z` on `main`, then pushing a semver tag:
 
 ```bash
 git tag vX.Y.Z && git push origin vX.Y.Z
 ```
 
-The workflow then:
+A `preflight` job stops the release before anything is pushed if the tag
+does not match both versions. The workflow then:
 
 1. Builds and pushes multi-arch OCI images (linux/amd64 + linux/arm64) to
    `ghcr.io/kroofy/pixtega`:
@@ -126,10 +128,8 @@ The workflow then:
    at runtime); the container image is the recommended distribution.
 3. Publishes the npm packages from [js/](../js/) — `pixtega` first, then
    its re-export `@pixtega/url` — straight from the TypeScript source in
-   the repository (`npm pack` of the workspaces; no dist build). The job
-   fails before publishing if the tag minus the leading `v` does not
-   equal both `package.json` versions, so npm versions and git tags stay
-   aligned. Before each publish the job asks
+   the repository (`npm pack` of the workspaces; no dist build). Before
+   each publish the job asks
    <https://registry.npmjs.org> whether that exact `name@version` already
    exists; if so, that workspace is skipped (`npm publish` is not
    idempotent — republishing 403s), so a partially published tag can be
