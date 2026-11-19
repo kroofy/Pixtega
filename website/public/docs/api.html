@@ -37,14 +37,14 @@
     <h1>API reference</h1>
     <p class="lead">
       The entire API is one endpoint, answering GET and HEAD. Everything
-      else — method, path shape, transform, version token — is strictly
+      else — method, path shape, transform, query string — is strictly
       validated, and every derived image has exactly one URL.
     </p>
 
     <h2 id="url-grammar">URL grammar<a class="anchor" href="#url-grammar" aria-label="Link to this section">#</a></h2>
-    <pre><code>GET /images/{mount}/{source-path}/{transform}[?v={source-version}]</code></pre>
+    <pre><code>GET /images/{mount}/{source-path}/{transform}</code></pre>
     <p>Example:</p>
-    <pre><code>GET /images/public/photos/example.jpg/w1280.webp?v=7d91c2</code></pre>
+    <pre><code>GET /images/public/photos/example.6acca6c1.jpg/w1280.webp</code></pre>
     <ul>
       <li>
         <code>{mount}</code> selects a configured source. Callers can never
@@ -66,13 +66,8 @@
         derived image has exactly one URL.
       </li>
       <li>
-        <code>v</code> is an opaque version token
-        (<code>[A-Za-z0-9._~-]{1,128}</code>) used only for cache policy. The
-        service never appends it to the upstream key. Callers must change
-        <code>v</code> whenever the source bytes change. The
-        <a href="/docs/configuration.html"><code>version_token</code></a>
-        configuration key can downgrade (<code>ignore</code>) or reject
-        (<code>reject</code>) it.
+        No query parameters are defined: any non-empty query string is a
+        400, so each derived image has exactly one URL.
       </li>
       <li>
         <code>GET</code> and <code>HEAD</code> are supported;
@@ -94,21 +89,34 @@
         <tr><th>Response</th><th>Cache-Control</th></tr>
       </thead>
       <tbody>
-        <tr><td>200 with <code>v</code></td><td><code>public, max-age=31536000, immutable</code></td></tr>
-        <tr><td>200 without <code>v</code></td><td><code>public, max-age={unversioned_success_ttl_seconds}</code></td></tr>
+        <tr><td>200</td><td><code>public, max-age={success_ttl_seconds}</code>, plus <code>, immutable</code> when <code>success_immutable = true</code></td></tr>
         <tr><td>304</td><td>same policy the matching 200 would have used</td></tr>
         <tr><td>404</td><td><code>public, max-age={not_found_ttl_seconds}</code></td></tr>
         <tr><td>every other error</td><td><code>no-store</code></td></tr>
       </tbody>
     </table>
     <div class="callout">
-      Do not enable year-long immutable caching unless every caller changes
-      <code>v</code> when source bytes change; the service cannot verify this
-      for you. The table shows the default
-      <code>version_token = "accept"</code>: with <code>"ignore"</code> a 200
-      with <code>v</code> uses the unversioned policy instead, and with
-      <code>"reject"</code> any <code>v</code> is a 400.
+      <strong>Recommended: content-hashed source names, cached for one
+      year.</strong> Give every source image a strongly identifying name —
+      a content hash such as <code>photos/example.6acca6c1.jpg</code> — and
+      never overwrite it. A path then always means the same bytes, so there
+      is no reason to cache it for less than a year.
     </div>
+    <pre><code>success_ttl_seconds = 31536000
+success_immutable = true</code></pre>
+    <p>
+      Every 200 (and 304) is then served with
+      <code>public, max-age=31536000, immutable</code>, and changing an
+      image means publishing it under a new name.
+    </p>
+    <p>
+      If your source paths can be overwritten, the lifetime is at your
+      discretion: leave <code>success_immutable</code> off and pick a
+      <code>success_ttl_seconds</code> you can live with. The service has
+      no cache-busting parameter, so a changed image at the same path is
+      only picked up once that lifetime runs out. Never set
+      <code>success_immutable = true</code> for paths that can change.
+    </p>
 
     <h2 id="errors">Errors<a class="anchor" href="#errors" aria-label="Link to this section">#</a></h2>
     <p>Errors are JSON: <code>{ "error": "message" }</code>.</p>
@@ -164,7 +172,7 @@
       separate <code>{"event":"source_error","level":"warn","detail":"..."}</code>
       line immediately before <code>request_completed</code>.
       <code>detail</code> never appears in the client JSON body.
-      Response bodies, credentials, and <code>v</code> values are never
+      Response bodies, credentials, and query strings are never
       logged.
     </p>
 

@@ -5,12 +5,12 @@
  * the server's configured width and quality allowlists; a URL that this
  * module accepts can still be rejected by the server with a 400. The
  * validation here mirrors the parts of the server's URL grammar that are
- * fixed (segment encoding, transform shape, the `v` token alphabet) so that
+ * fixed (segment encoding, transform shape) so that
  * unfixable URLs fail fast in the client instead of at request time.
  *
  * URL contract (see the Pixtega README):
  *
- *   GET {base}{pathPrefix}/{mount}/{source-path}/{transform}[?v={version}]
+ *   GET {base}{pathPrefix}/{mount}/{source-path}/{transform}
  *
  * with transform `w{width}[,q{quality}].{format}` and format one of
  * `webp`, `avif`, `jpeg`.
@@ -38,7 +38,7 @@ export interface PixtegaUrlOptions {
   mount: string;
   /**
    * Decoded source path, either as one string with `/` separating segments
-   * (`"photos/2024/example.jpg"`) or as an array of decoded segments
+   * (`"photos/2024/example.6acca6c1.jpg"`) or as an array of decoded segments
    * (`["photos", "2024", "café.jpg"]`). Segments are percent-encoded here
    * exactly as the server requires; do not pre-encode them.
    */
@@ -57,18 +57,11 @@ export interface PixtegaUrlOptions {
    * default.
    */
   quality?: number;
-  /**
-   * Optional source version token, `[A-Za-z0-9._~-]{1,128}`. Enables
-   * year-long immutable caching on the server; change it whenever the source
-   * bytes change.
-   */
-  v?: string;
   /** Path prefix the server is configured with. Defaults to `"/images"`. */
   pathPrefix?: string;
 }
 
 const MOUNT_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
-const VERSION_PATTERN = /^[A-Za-z0-9._~-]{1,128}$/;
 const MAX_WIDTH = 16384;
 const MAX_QUALITY = 100;
 
@@ -188,15 +181,14 @@ function validatePathPrefix(prefix: string): void {
  * pixtegaUrl({
  *   base: "https://images.example.com",
  *   mount: "public",
- *   path: "photos/example.jpg",
+ *   path: "photos/example.6acca6c1.jpg",
  *   width: 1280,
  *   format: "webp",
- *   v: "7d91c2",
  * })
- * // => "https://images.example.com/images/public/photos/example.jpg/w1280.webp?v=7d91c2"
+ * // => "https://images.example.com/images/public/photos/example.6acca6c1.jpg/w1280.webp"
  */
 export function pixtegaUrl(options: PixtegaUrlOptions): string {
-  const { mount, width, format, quality, v } = options;
+  const { mount, width, format, quality } = options;
   const base = options.base.replace(/\/+$/, "");
   const pathPrefix = options.pathPrefix ?? "/images";
   validatePathPrefix(pathPrefix);
@@ -210,14 +202,10 @@ export function pixtegaUrl(options: PixtegaUrlOptions): string {
   if (quality !== undefined) {
     validateQuality(quality);
   }
-  if (v !== undefined && !VERSION_PATTERN.test(v)) {
-    throw new TypeError('pixtega: v must match [A-Za-z0-9._~-]{1,128}');
-  }
 
   const transform =
     `w${width}` + (quality === undefined ? "" : `,q${quality}`) + `.${format}`;
-  const query = v === undefined ? "" : `?v=${v}`;
-  return `${base}${pathPrefix}/${mount}/${encodePath(options.path)}/${transform}${query}`;
+  return `${base}${pathPrefix}/${mount}/${encodePath(options.path)}/${transform}`;
 }
 
 export interface PixtegaSrcSetOptions extends Omit<PixtegaUrlOptions, "width"> {

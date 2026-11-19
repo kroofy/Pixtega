@@ -19,12 +19,11 @@ import { pixtegaUrl, pixtegaSrcSet, pixtegaPicture } from "pixtega";
 pixtegaUrl({
   base: "https://images.example.com",
   mount: "public",
-  path: "photos/example.jpg",
+  path: "photos/example.6acca6c1.jpg",
   width: 1280,
   format: "webp",
-  v: "7d91c2",
 });
-// => "https://images.example.com/images/public/photos/example.jpg/w1280.webp?v=7d91c2"
+// => "https://images.example.com/images/public/photos/example.6acca6c1.jpg/w1280.webp"
 
 pixtegaSrcSet({ base, mount, path, format: "webp", widths: [640, 1280] });
 // => ".../w640.webp 640w, .../w1280.webp 1280w"
@@ -49,7 +48,6 @@ Options for `pixtegaUrl`:
 | `width` | Integer 1..=16384, must be in the server's width allowlist. |
 | `format` | `"webp"`, `"avif"`, or `"jpeg"` (no aliases). |
 | `quality` | Optional. Must be in the format's quality allowlist and not equal its default; omit for the default. |
-| `v` | Optional version token `[A-Za-z0-9._~-]{1,128}`; enables immutable caching. Change it when the source bytes change. |
 | `pathPrefix` | Server's configured prefix, default `"/images"`. |
 
 The client cannot know your server's width and quality allowlists, so a

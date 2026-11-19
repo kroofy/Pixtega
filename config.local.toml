@@ -2,7 +2,7 @@
 # network dependency.
 #
 #   cargo run -- config.local.toml
-#   curl -o out.webp 'http://127.0.0.1:8080/images/fixtures/photos/example.jpg/w640.webp'
+#   curl -o out.webp 'http://127.0.0.1:8080/images/fixtures/photos/example.6acca6c1.jpg/w640.webp'
 
 listen_address = "127.0.0.1:8080"
 path_prefix = "/images"
@@ -15,7 +15,7 @@ download_timeout_ms = 10000
 request_timeout_ms = 30000
 max_redirects = 3
 max_concurrent_derivations = 8
-unversioned_success_ttl_seconds = 3600
+success_ttl_seconds = 3600
 not_found_ttl_seconds = 60
 
 [formats.webp]

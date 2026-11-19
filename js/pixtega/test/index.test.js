@@ -10,12 +10,11 @@ test("builds the README example URL", () => {
     pixtegaUrl({
       base,
       mount: "public",
-      path: "photos/example.jpg",
+      path: "photos/example.6acca6c1.jpg",
       width: 1280,
       format: "webp",
-      v: "7d91c2",
     }),
-    "https://images.example.com/images/public/photos/example.jpg/w1280.webp?v=7d91c2",
+    "https://images.example.com/images/public/photos/example.6acca6c1.jpg/w1280.webp",
   );
 });
 
@@ -24,13 +23,13 @@ test("quality, custom prefix, trailing-slash base, array path", () => {
     pixtegaUrl({
       base: "https://cdn.example.com///",
       mount: "archive",
-      path: ["photos", "2024", "example.jpg"],
+      path: ["photos", "2024", "example.6acca6c1.jpg"],
       width: 640,
       format: "jpeg",
       quality: 85,
       pathPrefix: "/img",
     }),
-    "https://cdn.example.com/img/archive/photos/2024/example.jpg/w640,q85.jpeg",
+    "https://cdn.example.com/img/archive/photos/2024/example.6acca6c1.jpg/w640,q85.jpeg",
   );
 });
 
@@ -74,9 +73,6 @@ test("rejects inputs the server would reject", () => {
     { ...ok, quality: 101 },
     { ...ok, quality: -1 },
     { ...ok, format: "jpg" },
-    { ...ok, v: "" },
-    { ...ok, v: "a".repeat(129) },
-    { ...ok, v: "spaces bad" },
     { ...ok, pathPrefix: "images" },
     { ...ok, pathPrefix: "/images/" },
   ];
@@ -99,10 +95,9 @@ test("srcset lists one entry per width in order", () => {
       path: "a.jpg",
       format: "webp",
       widths: [640, 1280],
-      v: "abc",
     }),
-    `${base}/images/public/a.jpg/w640.webp?v=abc 640w, ` +
-      `${base}/images/public/a.jpg/w1280.webp?v=abc 1280w`,
+    `${base}/images/public/a.jpg/w640.webp 640w, ` +
+      `${base}/images/public/a.jpg/w1280.webp 1280w`,
   );
 });
 

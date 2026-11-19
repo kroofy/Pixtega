@@ -75,10 +75,8 @@ pub enum RequestError {
     /// Explicit quality equal to the selected format's default; omitting `q`
     /// is the canonical spelling.
     QualityEqualsDefault,
-    /// Malformed query string, unknown parameter, or repeated parameter.
+    /// Any non-empty query string; no query parameter is defined.
     InvalidQuery,
-    /// `v` present but empty, overlong, percent-encoded, or non-canonical.
-    InvalidVersion,
 }
 
 impl RequestError {
@@ -106,7 +104,6 @@ impl RequestError {
             RequestError::DisallowedQuality => "quality not allowed",
             RequestError::QualityEqualsDefault => "quality equals the format default; omit q",
             RequestError::InvalidQuery => "invalid query parameter",
-            RequestError::InvalidVersion => "invalid version token",
         }
     }
 }

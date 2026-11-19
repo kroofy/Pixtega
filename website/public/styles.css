@@ -14,7 +14,6 @@
   --seg-mount: #b45309;
   --seg-path: #0f766e;
   --seg-transform: #4338ca;
-  --seg-version: #be185d;
   --bad: #b91c1c;
 }
 
@@ -33,7 +32,6 @@
     --seg-mount: #fbbf24;
     --seg-path: #5eead4;
     --seg-transform: #a5b4fc;
-    --seg-version: #f9a8d4;
     --bad: #f87171;
   }
 }
@@ -409,8 +407,6 @@ th {
 .part-path .part-label { color: var(--seg-path); }
 .part-transform > code { border-bottom-color: var(--seg-transform); }
 .part-transform .part-label { color: var(--seg-transform); }
-.part-version > code { border-bottom-color: var(--seg-version); }
-.part-version .part-label { color: var(--seg-version); }
 
 /* ---------- Derivation diagram ---------- */
 

@@ -24,7 +24,15 @@ download_timeout_ms = 5000
 request_timeout_ms = 9000
 max_redirects = 3
 max_concurrent_derivations = 8
-unversioned_success_ttl_seconds = 3600
+# Cache policy for 200s. Recommended: give every source image a unique,
+# content-derived name (for example a hash, photos/example.6acca6c1.jpg) and
+# never overwrite it. A path then always means the same bytes, so it can be
+# cached for one year and marked immutable, as below. If source paths can be
+# overwritten, set success_immutable = false and choose a shorter
+# success_ttl_seconds (1..=31536000): a changed image is only picked up
+# once that lifetime runs out.
+success_ttl_seconds = 31536000
+success_immutable = true
 not_found_ttl_seconds = 60
 
 [formats.webp]
@@ -41,7 +49,7 @@ allowed_qualities = [70, 92]
 
 # The image bundles the repository fixtures at /app/fixtures, so this mount
 # works out of the box and is handy for a first smoke test:
-#   GET /images/fixtures/photos/example.jpg/w640.webp
+#   GET /images/fixtures/photos/example.6acca6c1.jpg/w640.webp
 # With inline CONFIG the relative root resolves against the working
 # directory, which is /app in the image. Remove this mount in production.
 [[sources]]

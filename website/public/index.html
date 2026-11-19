@@ -44,9 +44,8 @@
       <div class="url-parts">
         <span class="url-part part-fixed"><code>GET /images</code><span class="part-label">prefix</span></span>
         <span class="url-part part-mount"><code>/public</code><span class="part-label">mount</span></span>
-        <span class="url-part part-path"><code>/photos/example.jpg</code><span class="part-label">source path</span></span>
+        <span class="url-part part-path"><code>/photos/example.6acca6c1.jpg</code><span class="part-label">source path</span></span>
         <span class="url-part part-transform"><code>/w1280.webp</code><span class="part-label">width + format</span></span>
-        <span class="url-part part-version"><code>?v=7d91c2</code><span class="part-label">version</span></span>
       </div>
     </figure>
   </div>
@@ -58,8 +57,7 @@
       names the original. The last segment is the size and format:
       <code>w{width}[,q{quality}].{format}</code>. Widths and qualities
       come from allowlists. See the <a href="/docs/api.html">API reference</a>
-      for the full grammar. An optional <code>v</code> query param is for
-      cache busting when the original changes.
+      for the full grammar.
     </p>
   </section>
 
@@ -71,7 +69,7 @@
     </p>
     <figure class="derive-diagram" aria-label="One original deriving three variants; a disallowed width is rejected">
       <div class="derive-source">
-        <code>photos/example.jpg</code>
+        <code>photos/example.6acca6c1.jpg</code>
         <span class="node-meta">one stored original · 4000×3000</span>
       </div>
       <div class="derive-trunk" aria-hidden="true"></div>

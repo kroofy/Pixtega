@@ -11,10 +11,10 @@ test("re-exports the pixtega API", () => {
     pixtegaUrl({
       base: "https://images.example.com",
       mount: "public",
-      path: "photos/example.jpg",
+      path: "photos/example.6acca6c1.jpg",
       width: 1280,
       format: "webp",
     }),
-    "https://images.example.com/images/public/photos/example.jpg/w1280.webp",
+    "https://images.example.com/images/public/photos/example.6acca6c1.jpg/w1280.webp",
   );
 });

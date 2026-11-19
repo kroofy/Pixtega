@@ -22,7 +22,6 @@ fn request_error_variants() -> Vec<RequestError> {
         RequestError::DisallowedQuality,
         RequestError::QualityEqualsDefault,
         RequestError::InvalidQuery,
-        RequestError::InvalidVersion,
     ]
 }
 
@@ -76,7 +75,6 @@ fn request_error_public_messages_are_the_documented_strings() {
             "quality equals the format default; omit q",
         ),
         (RequestError::InvalidQuery, "invalid query parameter"),
-        (RequestError::InvalidVersion, "invalid version token"),
     ] {
         assert_eq!(error.public_message(), message, "{error:?}");
     }
