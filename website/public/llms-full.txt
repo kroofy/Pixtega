@@ -29,21 +29,19 @@ Anatomy of a Pixtega URL:
 ```text
 GET /images            <- prefix (path_prefix, default "/images")
     /public            <- mount
-    /photos/example.jpg <- source path
+    /photos/example.6acca6c1.jpg <- source path
     /w1280.webp        <- transform: width + format
-    ?v=7d91c2          <- optional version token
 ```
 
 The mount (`public`) picks a configured source. The path names the original.
 The last segment is the size and format: `w{width}[,q{quality}].{format}`.
-Widths and qualities come from allowlists. An optional `v` query param is for
-cache busting when the original changes.
+Widths and qualities come from allowlists.
 
 ### What a URL gives you
 
 Store one original. Every variant is the same URL with a different final
 segment — and only allowlisted widths and qualities exist. For one stored
-original `photos/example.jpg` (4000×3000), with the values from
+original `photos/example.6acca6c1.jpg` (4000×3000), with the values from
 `config.example.toml` (widths `[320, 640, 1280, 1920]`, per-format quality
 allowlists):
 
@@ -100,7 +98,7 @@ git clone https://github.com/kroofy/Pixtega.git
 cd Pixtega
 cargo run -- config.local.toml
 # in another shell:
-curl -o out.webp 'http://127.0.0.1:8080/images/fixtures/photos/example.jpg/w640.webp'
+curl -o out.webp 'http://127.0.0.1:8080/images/fixtures/photos/example.6acca6c1.jpg/w640.webp'
 ```
 
 `config.local.toml` serves the bundled `fixtures/` directory through a
@@ -220,17 +218,13 @@ request_timeout_ms = 30000
 max_redirects = 3
 # Process-wide fetch+process permits.
 max_concurrent_derivations = 8
-# Cache lifetime of 200 responses without a `v` token.
-unversioned_success_ttl_seconds = 3600
+# Cache policy of 200 responses. Recommended with content-hashed source
+# names that are never overwritten: one year, immutable. Otherwise set
+# success_immutable = false and choose a shorter lifetime.
+success_ttl_seconds = 31536000
+success_immutable = true
 # Cache lifetime of 404 responses.
 not_found_ttl_seconds = 60
-
-# How the `v` query parameter is treated. Optional; defaults to "accept".
-#   accept - a valid `v` upgrades the response to immutable caching
-#   ignore - `v` is validated as usual but the response is served with
-#            unversioned_success_ttl_seconds, as if no `v` were present
-#   reject - any `v` is a 400 (for deployments that version by path)
-version_token = "accept"
 
 # One block per enabled output format. `default_quality` is required.
 # An empty or absent `allowed_qualities` means callers cannot pass `q`
@@ -280,9 +274,9 @@ region = "us-east-1"
 | `request_timeout_ms` | 1..=300000 | whole-request deadline (optional, default 9000); permit wait, fetch, and processing spend from this one budget, expiry is a non-cacheable 504 |
 | `max_redirects` | 0..=10 | HTTP(S) redirect bound (same origin, same base path only) |
 | `max_concurrent_derivations` | 1..=64 | process-wide fetch+process permits |
-| `unversioned_success_ttl_seconds` | 1..=86400 | cache lifetime without `v` |
+| `success_ttl_seconds` | 1..=31536000 | cache lifetime of 200s; one year is recommended with content-hashed source names |
+| `success_immutable` | `true` \| `false` | add `immutable` to 200s (optional, default `false`); only for source paths that are never overwritten |
 | `not_found_ttl_seconds` | 1..=3600 | cache lifetime of 404s |
-| `version_token` | `accept` \| `ignore` \| `reject` | what the `v` query parameter means (default `accept`; any other value stops startup) |
 
 `request_timeout_ms` is the deadline for answering one request: waiting for
 a `max_concurrent_derivations` permit, the source fetch (bounded by
@@ -295,14 +289,6 @@ deadline below any host kill deadline
 the host tears the response down mid-stream. A timed-out encode cannot be
 cancelled: it keeps occupying its `max_concurrent_derivations` slot until
 libvips returns.
-
-`version_token` is the operator lever over the `v` cache-busting parameter:
-`accept` (the default) lets a valid `v` upgrade the response to year-long
-immutable caching; `ignore` validates the same grammar but serves the
-response with `unversioned_success_ttl_seconds` as if no `v` were present;
-`reject` turns any `v` into a 400, like any other unknown query parameter —
-useful when sources are versioned by path. A missing `v` is fine in every
-mode.
 
 ### Source transports
 
@@ -359,19 +345,19 @@ Source: https://pixtega.com/docs/api.html
 ## API reference
 
 The entire API is one endpoint, answering GET and HEAD. Everything else —
-method, path shape, transform, version token — is strictly validated, and
+method, path shape, transform, query string — is strictly validated, and
 every derived image has exactly one URL.
 
 ### URL grammar
 
 ```text
-GET /images/{mount}/{source-path}/{transform}[?v={source-version}]
+GET /images/{mount}/{source-path}/{transform}
 ```
 
 Example:
 
 ```text
-GET /images/public/photos/example.jpg/w1280.webp?v=7d91c2
+GET /images/public/photos/example.6acca6c1.jpg/w1280.webp
 ```
 
 - `{mount}` selects a configured source. Callers can never supply a
@@ -384,10 +370,8 @@ GET /images/public/photos/example.jpg/w1280.webp?v=7d91c2
   configured allowlist; quality must be in the selected format's allowlist.
   Omitting `q` uses the format's default; spelling out the default is
   rejected, so each derived image has exactly one URL.
-- `v` is an opaque version token (`[A-Za-z0-9._~-]{1,128}`) used only for
-  cache policy. The service never appends it to the upstream key. Callers
-  must change `v` whenever the source bytes change. The `version_token`
-  configuration key can downgrade (`ignore`) or reject (`reject`) it.
+- No query parameters are defined: any non-empty query string is a 400, so
+  each derived image has exactly one URL.
 - `GET` and `HEAD` are supported; `HEAD` returns exactly the `GET`
   response — same status and headers, including `Content-Length` — with
   the body dropped. Anything else is 405, with an `Allow: GET, HEAD`
@@ -400,17 +384,31 @@ keeps its original dimensions.
 
 | Response | Cache-Control |
 | --- | --- |
-| 200 with `v` | `public, max-age=31536000, immutable` |
-| 200 without `v` | `public, max-age={unversioned_success_ttl_seconds}` |
+| 200 | `public, max-age={success_ttl_seconds}`, plus `, immutable` when `success_immutable = true` |
 | 304 | same policy the matching 200 would have used |
 | 404 | `public, max-age={not_found_ttl_seconds}` |
 | every other error | `no-store` |
 
-Do not enable year-long immutable caching unless every caller changes `v`
-when source bytes change; the service cannot verify this for you. The
-table shows the default `version_token = "accept"`: with `"ignore"` a 200
-with `v` uses the unversioned policy instead, and with `"reject"` any `v`
-is a 400.
+**Recommended: content-hashed source names, cached for one year.** Give
+every source image a strongly identifying name — a content hash such as
+`photos/example.6acca6c1.jpg` — and never overwrite it. A path then always
+means the same bytes, so there is no reason to cache it for less than a
+year:
+
+```toml
+success_ttl_seconds = 31536000
+success_immutable = true
+```
+
+Every 200 (and 304) is then served with
+`public, max-age=31536000, immutable`, and changing an image means
+publishing it under a new name.
+
+If your source paths can be overwritten, the lifetime is at your
+discretion: leave `success_immutable` off and pick a `success_ttl_seconds`
+you can live with. The service has no cache-busting parameter, so a changed
+image at the same path is only picked up once that lifetime runs out. Never
+set `success_immutable = true` for paths that can change.
 
 A 200 carries an `ETag` when the Source exposed an object identity (S3
 `ETag`/`VersionId`, HTTP `ETag`, or filesystem mtime+size+key). The tag
@@ -455,7 +453,7 @@ stdout, with status, a stable outcome from a closed set (`success`,
 `rejected_request`, `not_found`, `timeout`, `source_too_large`,
 `source_unavailable`, `undecodable_source`, `flatten_failed`,
 `encode_failed`), mount, output width/format, upstream status, byte counts,
-and elapsed milliseconds. Response bodies, credentials, and `v` values are
+and elapsed milliseconds. Response bodies, credentials, and query strings are
 never logged.
 
 Path validation and adapter behavior are covered further in the README
@@ -525,7 +523,7 @@ aws lambda create-function \
 # 4. Expose a Function URL for a smoke test (dev only — see below)
 aws lambda create-function-url-config --function-name pixtega \
   --auth-type NONE --invoke-mode RESPONSE_STREAM
-curl -o out.webp "${FUNCTION_URL}images/fixtures/photos/example.jpg/w640.webp"
+curl -o out.webp "${FUNCTION_URL}images/fixtures/photos/example.6acca6c1.jpg/w640.webp"
 ```
 
 A CLI-created `NONE`-auth Function URL also needs two resource-policy
@@ -592,9 +590,8 @@ Source: https://github.com/kroofy/Pixtega/blob/main/README.md
   `npm install pixtega` or `npm install @pixtega/url`.
 
 The client builds strings and never fetches. It rejects everything the
-server's fixed URL grammar rejects (segment encoding, transform shape, the
-`v` token alphabet), but it cannot know your server's configured width and
-quality allowlists. A URL this client accepts can still get a 400: a width
+server's fixed URL grammar rejects (segment encoding, transform shape), but
+it cannot know your server's configured width and quality allowlists. A URL this client accepts can still get a 400: a width
 or quality outside the allowlist, or an explicit quality equal to the
 format's default (omit `quality` to use the default).
 
@@ -604,14 +601,13 @@ import { pixtegaUrl, pixtegaSrcSet, pixtegaPicture } from "pixtega";
 pixtegaUrl({
   base: "https://images.example.com",
   mount: "public",
-  path: "photos/example.jpg", // decoded; also accepts ["photos", "example.jpg"]
+  path: "photos/example.6acca6c1.jpg", // decoded; also accepts ["photos", "example.6acca6c1.jpg"]
   width: 1280,
   format: "webp", // "webp" | "avif" | "jpeg"
   quality: 85,    // optional; must be allowlisted and not the default
-  v: "7d91c2",    // optional version token for immutable caching
   pathPrefix: "/images", // default
 });
-// => "https://images.example.com/images/public/photos/example.jpg/w1280,q85.webp?v=7d91c2"
+// => "https://images.example.com/images/public/photos/example.6acca6c1.jpg/w1280,q85.webp"
 
 pixtegaSrcSet({ base, mount, path, format: "webp", widths: [640, 1280] });
 // => ".../w640.webp 640w, .../w1280.webp 1280w"

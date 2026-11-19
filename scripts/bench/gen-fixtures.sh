@@ -11,7 +11,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$OUT"
 
-SRC=fixtures/photos/example.jpg
+SRC=fixtures/photos/example.6acca6c1.jpg
 
 # small: 200px thumbnail of the bundled photo (~7 KB)
 vips thumbnail "$SRC" "$OUT/small.jpg[Q=85,strip]" 200

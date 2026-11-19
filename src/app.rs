@@ -378,15 +378,16 @@ fn security_headers(builder: Builder) -> Builder {
         .header(header::X_FRAME_OPTIONS, "DENY")
 }
 
-fn cache_control_value(state: &AppState, resolved: &ResolvedRequest) -> String {
-    if resolved.versioned {
-        "public, max-age=31536000, immutable".to_string()
+fn cache_control_value(state: &AppState) -> String {
+    let immutable = if state.config.success_immutable {
+        ", immutable"
     } else {
-        format!(
-            "public, max-age={}",
-            state.config.unversioned_success_ttl_seconds
-        )
-    }
+        ""
+    };
+    format!(
+        "public, max-age={}{immutable}",
+        state.config.success_ttl_seconds
+    )
 }
 
 fn etag_header(identity: &ObjectIdentity, resolved: &ResolvedRequest) -> HeaderValue {
@@ -406,7 +407,7 @@ fn success_response(
             header::CONTENT_TYPE,
             resolved.transform.format.content_type(),
         )
-        .header(header::CACHE_CONTROL, cache_control_value(state, resolved));
+        .header(header::CACHE_CONTROL, cache_control_value(state));
     if let Some(identity) = identity {
         builder = builder.header(header::ETAG, etag_header(identity, resolved));
     }
@@ -426,7 +427,7 @@ fn not_modified_response(
             header::CONTENT_TYPE,
             resolved.transform.format.content_type(),
         )
-        .header(header::CACHE_CONTROL, cache_control_value(state, resolved))
+        .header(header::CACHE_CONTROL, cache_control_value(state))
         .header(header::ETAG, etag_header(identity, resolved));
     security_headers(builder)
         .body(Body::empty())

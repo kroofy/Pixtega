@@ -32,19 +32,19 @@ image in [Dockerfile.lambda](Dockerfile.lambda).
 ```bash
 cargo run -- config.local.toml
 # in another shell:
-curl -o out.webp 'http://127.0.0.1:8080/images/fixtures/photos/example.jpg/w640.webp'
+curl -o out.webp 'http://127.0.0.1:8080/images/fixtures/photos/example.6acca6c1.jpg/w640.webp'
 ```
 
 ## URL contract
 
 ```text
-GET /images/{mount}/{source-path}/{transform}[?v={source-version}]
+GET /images/{mount}/{source-path}/{transform}
 ```
 
 Example:
 
 ```text
-GET /images/public/photos/example.jpg/w1280.webp?v=7d91c2
+GET /images/public/photos/example.6acca6c1.jpg/w1280.webp
 ```
 
 - `{mount}` selects a configured Source. Callers can never supply a
@@ -57,11 +57,8 @@ GET /images/public/photos/example.jpg/w1280.webp?v=7d91c2
   configured allowlist; quality must be in the selected format's allowlist.
   Omitting `q` uses the format's default; spelling out the default is
   rejected so each derived image has exactly one URL.
-- `v` is an opaque version token (`[A-Za-z0-9._~-]{1,128}`) used only for
-  cache policy. The service never appends it to the upstream key. Callers
-  must change `v` whenever the source bytes change. The `version_token`
-  configuration key can downgrade (`ignore`) or reject (`reject`) it — see
-  Configuration below.
+- No query parameters are defined: any non-empty query string is a 400, so
+  each derived image has exactly one URL.
 - `GET` and `HEAD` are supported; `HEAD` returns exactly the `GET`
   response — same status and headers, including `Content-Length` — with
   the body dropped. Anything else is 405 with `Allow: GET, HEAD`. Request
@@ -74,17 +71,31 @@ keeps its original dimensions.
 
 | Response | Cache-Control |
 | --- | --- |
-| 200 with `v` | `public, max-age=31536000, immutable` |
-| 200 without `v` | `public, max-age={unversioned_success_ttl_seconds}` |
+| 200 | `public, max-age={success_ttl_seconds}`, plus `, immutable` when `success_immutable = true` |
 | 304 | same policy the matching 200 would have used |
 | 404 | `public, max-age={not_found_ttl_seconds}` |
 | every other error | `no-store` |
 
-Do not enable year-long immutable caching unless every caller changes `v`
-when source bytes change; the service cannot verify this for you. The
-table shows the default `version_token = "accept"`: with `"ignore"` a 200
-with `v` uses the unversioned policy instead, and with `"reject"` any `v`
-is a 400.
+**Recommended: content-hashed source names, cached for one year.** Give
+every source image a strongly identifying name — a content hash such as
+`photos/example.6acca6c1.jpg` — and never overwrite it. A path then always
+means the same bytes, so there is no reason to cache it for less than a
+year:
+
+```toml
+success_ttl_seconds = 31536000
+success_immutable = true
+```
+
+Every 200 (and 304) is then served with
+`public, max-age=31536000, immutable`, and changing an image means
+publishing it under a new name.
+
+If your source paths can be overwritten, the lifetime is at your
+discretion: leave `success_immutable` off and pick a `success_ttl_seconds`
+you can live with. The service has no cache-busting parameter, so a changed
+image at the same path is only picked up once that lifetime runs out. Never
+set `success_immutable = true` for paths that can change.
 
 A 200 carries an `ETag` when the Source exposed an object identity (S3
 `ETag`/`VersionId`, HTTP `ETag`, or filesystem mtime+size+key). The tag
@@ -130,7 +141,8 @@ Key limits:
 | `request_timeout_ms` | 1..=300000 | whole-request deadline (optional, default 9000); permit wait, fetch, and processing spend from this one budget |
 | `max_redirects` | 0..=10 | HTTP(S) redirect bound (same origin, same base path only) |
 | `max_concurrent_derivations` | 1..=64 | process-wide fetch+process permits |
-| `unversioned_success_ttl_seconds` | 1..=86400 | cache lifetime without `v` |
+| `success_ttl_seconds` | 1..=31536000 | cache lifetime of 200s; one year is recommended with content-hashed source names |
+| `success_immutable` | `true` \| `false` | add `immutable` to 200s (optional, default `false`); only for source paths that are never overwritten |
 | `not_found_ttl_seconds` | 1..=3600 | cache lifetime of 404s |
 
 `request_timeout_ms` is the deadline for answering one request: waiting for
@@ -144,17 +156,6 @@ deadline below any host kill deadline
 the host tears the response down mid-stream. A timed-out encode cannot be
 cancelled: it keeps occupying its `max_concurrent_derivations` slot until
 libvips returns.
-
-`version_token` (optional, default `"accept"`) decides what the `v` query
-parameter means; the value set is closed and anything else stops startup:
-
-- `accept`: a valid `v` upgrades the response to year-long immutable
-  caching (the default and pre-existing behavior).
-- `ignore`: `v` is parsed and validated exactly as in `accept`, but the
-  response is served with `unversioned_success_ttl_seconds` as if no `v`
-  were present. A well-formed `v` is never a 400.
-- `reject`: any `v` is a 400, like any other unknown query parameter, for
-  deployments that version sources by path. A missing `v` is always fine.
 
 Each enabled format gets its own `[formats.<name>]` block with a required
 `default_quality` and an optional `allowed_qualities` list (empty or absent
@@ -292,7 +293,7 @@ example `s3 dispatch failure` vs `s3 service error: AccessDenied`), a
 separate `{"event":"source_error","level":"warn","detail":"..."}` line is
 emitted immediately before `request_completed`. `detail` is for logs only
 and never appears in the client JSON body. Response bodies, credentials,
-and `v` values are never logged.
+and query strings are never logged.
 
 ## Development
 

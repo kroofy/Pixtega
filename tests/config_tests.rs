@@ -8,7 +8,6 @@ use std::path::Path;
 
 use pixtega::config::{
     is_private_or_local_destination, load_from_file, load_from_str, AppConfig, SourceConfig,
-    VersionTokenMode,
 };
 use pixtega::errors::ConfigError;
 use pixtega::types::OutputFormat;
@@ -27,7 +26,7 @@ const TOP_FIELDS: &[(&str, &str)] = &[
     ("request_timeout_ms", "60000"),
     ("max_redirects", "2"),
     ("max_concurrent_derivations", "4"),
-    ("unversioned_success_ttl_seconds", "60"),
+    ("success_ttl_seconds", "60"),
     ("not_found_ttl_seconds", "30"),
 ];
 
@@ -136,7 +135,6 @@ fn example_configuration_parses_via_load_from_file() {
     assert_eq!(config.allowed_widths, vec![320, 640, 1280, 1920]);
     assert_eq!(config.download_timeout_ms, 10_000);
     assert_eq!(config.request_timeout_ms, 30_000);
-    assert_eq!(config.version_token, VersionTokenMode::Accept);
     assert_eq!(config.sources.len(), 3);
 
     let webp = config.format_policy(OutputFormat::Webp).expect("webp");
@@ -201,7 +199,7 @@ fn boundary_numeric_values_are_accepted() {
         ("request_timeout_ms", &["300000"]),
         ("max_redirects", &["0", "10"]),
         ("max_concurrent_derivations", &["1", "64"]),
-        ("unversioned_success_ttl_seconds", &["1", "86400"]),
+        ("success_ttl_seconds", &["1", "31536000"]),
         ("not_found_ttl_seconds", &["1", "3600"]),
     ];
     for (field, values) in boundaries {
@@ -281,7 +279,7 @@ fn out_of_range_limits_timeouts_and_ttls_are_rejected() {
         ("request_timeout_ms", &["0", "300001"]),
         ("max_redirects", &["-1", "11"]),
         ("max_concurrent_derivations", &["0", "65"]),
-        ("unversioned_success_ttl_seconds", &["0", "86401"]),
+        ("success_ttl_seconds", &["0", "31536001"]),
         ("not_found_ttl_seconds", &["0", "3601"]),
     ];
     for (field, values) in cases {
@@ -356,43 +354,33 @@ fn unknown_top_level_fields_are_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// version_token: a closed enum defaulting to `accept`.
+// The removed `version_token` and `unversioned_success_ttl_seconds` keys are
+// unknown fields now.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn version_token_defaults_to_accept_when_omitted() {
+fn removed_version_keys_are_rejected() {
+    let toml = format!("version_token = \"accept\"\n{}", valid_config());
+    assert_rejected(&toml, "version_token");
+    let toml = format!("unversioned_success_ttl_seconds = 60\n{}", valid_config());
+    assert_rejected(&toml, "unversioned_success_ttl_seconds");
+}
+
+// ---------------------------------------------------------------------------
+// success_immutable: optional boolean, off unless set.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn success_immutable_defaults_to_false_and_accepts_booleans() {
     let config = load(&valid_config()).expect("baseline configuration must parse");
-    assert_eq!(config.version_token, VersionTokenMode::Accept);
-}
-
-#[test]
-fn version_token_accepts_the_three_documented_modes() {
-    let cases = [
-        ("accept", VersionTokenMode::Accept),
-        ("ignore", VersionTokenMode::Ignore),
-        ("reject", VersionTokenMode::Reject),
-    ];
-    for (value, expected) in cases {
-        let toml = format!("version_token = \"{value}\"\n{}", valid_config());
-        let config =
-            load(&toml).unwrap_or_else(|e| panic!("version_token = {value:?} must parse: {e}"));
-        assert_eq!(config.version_token, expected, "value {value:?}");
+    assert!(!config.success_immutable);
+    for (value, expected) in [("true", true), ("false", false)] {
+        let toml = format!("success_immutable = {value}\n{}", valid_config());
+        let config = load(&toml).expect("boolean must parse");
+        assert_eq!(config.success_immutable, expected);
     }
-}
-
-#[test]
-fn unknown_version_token_values_are_rejected() {
-    for value in [
-        "\"Accept\"", // case-sensitive
-        "\"IGNORE\"",
-        "\"deny\"",
-        "\"\"",
-        "true", // wrong type
-        "1",
-    ] {
-        let toml = format!("version_token = {value}\n{}", valid_config());
-        assert_rejected(&toml, "version_token");
-    }
+    let toml = format!("success_immutable = \"yes\"\n{}", valid_config());
+    assert_rejected(&toml, "success_immutable");
 }
 
 // ---------------------------------------------------------------------------

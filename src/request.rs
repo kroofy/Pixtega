@@ -9,7 +9,7 @@
 //! - source-path validation (exactly-once decoding, traversal rejection,
 //!   canonical percent encoding, UTF-8)
 //! - the Transform grammar and its allowlists
-//! - the `v` query parameter contract
+//! - query string rejection (no query parameter is defined)
 //!
 //! The rest of the application never parses URL strings again.
 //!
@@ -17,7 +17,7 @@
 //! path structure (missing source path / transform), then source-path
 //! segments left to right, then the Transform segment, then the query.
 
-use crate::config::{AppConfig, VersionTokenMode};
+use crate::config::AppConfig;
 use crate::errors::RequestError;
 use crate::types::{OutputFormat, ResolvedRequest, Transform, UpstreamKey};
 
@@ -40,8 +40,8 @@ const MAX_CONFIGURABLE_QUALITY: u64 = 100;
 /// the raw query string without the leading `?`, when one exists.
 ///
 /// On success the returned [`ResolvedRequest`] carries the Mount, the
-/// upstream key (Key Prefix applied), the resolved Transform, and whether
-/// the request was versioned. The Source is guaranteed to be configured.
+/// upstream key (Key Prefix applied), and the resolved Transform. The
+/// Source is guaranteed to be configured.
 ///
 /// This function is pure: it performs no Source I/O of any kind.
 pub fn parse_request(
@@ -85,13 +85,12 @@ pub fn parse_request(
     }
 
     let transform = parse_transform(config, transform_segment)?;
-    let versioned = parse_query(raw_query, config.version_token)?;
+    parse_query(raw_query)?;
 
     Ok(ResolvedRequest {
         mount: mount.to_string(),
         upstream_key: UpstreamKey::new(key_segments),
         transform,
-        versioned,
     })
 }
 
@@ -293,48 +292,12 @@ fn parse_transform(config: &AppConfig, raw: &str) -> Result<Transform, RequestEr
     })
 }
 
-/// Validate the query string. Only `v` is known; it may appear at most
-/// once. Returns whether the request counts as versioned. An empty query
-/// string is treated as no query.
-///
-/// `mode` decides what a well-formed `v` means: `accept` marks the request
-/// versioned, `ignore` validates the same grammar but reports the request
-/// as unversioned, and `reject` treats `v` like any other unknown query
-/// parameter.
-fn parse_query(raw_query: Option<&str>, mode: VersionTokenMode) -> Result<bool, RequestError> {
-    let query = match raw_query {
-        None => return Ok(false),
-        Some("") => return Ok(false),
-        Some(q) => q,
-    };
-    let mut versioned = false;
-    for pair in query.split('&') {
-        let (key, value) = match pair.split_once('=') {
-            Some((key, value)) => (key, Some(value)),
-            None => (pair, None),
-        };
-        if key != "v" || mode == VersionTokenMode::Reject {
-            return Err(RequestError::InvalidQuery);
-        }
-        if versioned {
-            return Err(RequestError::InvalidQuery);
-        }
-        // `?v` (present but valueless) is a present-but-invalid version.
-        let value = value.ok_or(RequestError::InvalidVersion)?;
-        validate_version_token(value)?;
-        versioned = true;
+/// Validate the query string. No query parameter is known, so any
+/// non-empty query string is rejected. An empty query string is treated as
+/// no query.
+fn parse_query(raw_query: Option<&str>) -> Result<(), RequestError> {
+    match raw_query {
+        None | Some("") => Ok(()),
+        Some(_) => Err(RequestError::InvalidQuery),
     }
-    Ok(versioned && mode == VersionTokenMode::Accept)
-}
-
-/// `v` must match `[A-Za-z0-9._~-]{1,128}` exactly; percent encoding is not
-/// accepted.
-fn validate_version_token(value: &str) -> Result<(), RequestError> {
-    if value.is_empty() || value.len() > 128 {
-        return Err(RequestError::InvalidVersion);
-    }
-    if !value.bytes().all(is_unreserved) {
-        return Err(RequestError::InvalidVersion);
-    }
-    Ok(())
 }

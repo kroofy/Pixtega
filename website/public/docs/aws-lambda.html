@@ -107,7 +107,7 @@ aws lambda create-function \
 # 4. Expose a Function URL for a smoke test (dev only — see below)
 aws lambda create-function-url-config --function-name pixtega \
   --auth-type NONE --invoke-mode RESPONSE_STREAM
-curl -o out.webp "${FUNCTION_URL}images/fixtures/photos/example.jpg/w640.webp"</code></pre>
+curl -o out.webp "${FUNCTION_URL}images/fixtures/photos/example.6acca6c1.jpg/w640.webp"</code></pre>
     <p>
       A CLI-created <code>NONE</code>-auth Function URL also needs two
       resource-policy statements before unsigned requests stop 403ing:

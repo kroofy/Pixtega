@@ -3,8 +3,7 @@
 //! Reads from a configured bucket/region with the standard SDK credential
 //! provider chain; credentials never come from TOML. Supports optional
 //! `endpoint_url` and `force_path_style` for local S3-compatible fixtures.
-//! The request `v` parameter is never sent as an S3 `versionId` and never
-//! becomes part of the object key. Missing-key responses map to absence;
+//! No S3 `versionId` is ever sent. Missing-key responses map to absence;
 //! access denial maps to unavailability; SDK timeouts map to the shared
 //! timeout outcome. The advertised object length and the streamed body are
 //! both checked against the byte limit.
@@ -87,8 +86,7 @@ impl S3Source {
 
     async fn fetch_inner(&self, key: &UpstreamKey) -> Result<FetchedObject, SourceError> {
         // The object key is exactly Key Prefix + validated source path.
-        // No version_id is ever sent: the request `v` parameter is a cache
-        // token, not an S3 object version.
+        // No version_id is ever sent.
         let output = self
             .client
             .get_object()

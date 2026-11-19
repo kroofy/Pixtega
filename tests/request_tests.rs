@@ -8,9 +8,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use pixtega::config::{
-    AppConfig, FilesystemSourceConfig, FormatPolicy, SourceConfig, VersionTokenMode,
-};
+use pixtega::config::{AppConfig, FilesystemSourceConfig, FormatPolicy, SourceConfig};
 use pixtega::errors::RequestError;
 use pixtega::request::{parse_request, MAX_TARGET_BYTES};
 use pixtega::types::{OutputFormat, Transform};
@@ -44,9 +42,9 @@ fn config_with_formats(formats: BTreeMap<OutputFormat, FormatPolicy>) -> AppConf
         request_timeout_ms: 30_000,
         max_redirects: 3,
         max_concurrent_derivations: 8,
-        unversioned_success_ttl_seconds: 3600,
+        success_ttl_seconds: 3600,
+        success_immutable: false,
         not_found_ttl_seconds: 60,
-        version_token: VersionTokenMode::Accept,
         formats,
         sources: vec![
             // Key Prefix differs from the Mount.
@@ -130,17 +128,17 @@ fn valid_nested_path_resolves_mount_key_and_transform() {
     let cfg = base_config();
     let resolved = ok(
         &cfg,
-        "/images/public/photos/2024/example.jpg/w640.webp",
+        "/images/public/photos/2024/example.6acca6c1.jpg/w640.webp",
         None,
     );
     assert_eq!(resolved.mount, "public");
     assert_eq!(
         resolved.upstream_key.joined(),
-        "media/photos/2024/example.jpg"
+        "media/photos/2024/example.6acca6c1.jpg"
     );
     assert_eq!(
         resolved.upstream_key.segments,
-        vec!["media", "photos", "2024", "example.jpg"]
+        vec!["media", "photos", "2024", "example.6acca6c1.jpg"]
     );
     assert_eq!(
         resolved.transform,
@@ -150,7 +148,6 @@ fn valid_nested_path_resolves_mount_key_and_transform() {
             quality: 82, // policy default; q omitted
         }
     );
-    assert!(!resolved.versioned);
 }
 
 #[test]
@@ -284,115 +281,34 @@ fn dots_underscores_unicode_and_nesting_survive() {
     }
 }
 
-// --- Missing `v` is accepted.
+// --- No query parameter is defined: an absent or empty query is accepted,
+// --- anything else returns 400 (InvalidQuery).
 
 #[test]
-fn missing_v_is_accepted() {
+fn absent_or_empty_query_is_accepted() {
     let cfg = base_config();
     for query in [None, Some("")] {
-        let resolved = ok(&cfg, "/images/public/a.jpg/w640.webp", query);
-        assert!(!resolved.versioned, "query {query:?}");
+        ok(&cfg, "/images/public/a.jpg/w640.webp", query);
     }
 }
 
 #[test]
-fn valid_v_marks_the_request_versioned() {
-    let cfg = base_config();
-    for v in [
-        "7d91c2",
-        "a",
-        "A",
-        "0",
-        "-",
-        ".",
-        "_",
-        "~",
-        "a.B_c~d-9",
-        &"x".repeat(128),
-    ] {
-        let query = format!("v={v}");
-        let resolved = ok(&cfg, "/images/public/a.jpg/w640.webp", Some(&query));
-        assert!(resolved.versioned, "query {query:?}");
-    }
-}
-
-#[test]
-fn generated_valid_v_tokens_are_accepted() {
-    let cfg = base_config();
-    let alphabet: Vec<char> = unreserved_chars().collect();
-    // Deterministic linear congruential generator; no external crates.
-    let mut state: u64 = 0x1234_5678_9abc_def0;
-    let mut next = move || {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        state >> 33
-    };
-    for _ in 0..64 {
-        let len = (next() % 128) as usize + 1;
-        let token: String = (0..len)
-            .map(|_| alphabet[(next() as usize) % alphabet.len()])
-            .collect();
-        let query = format!("v={token}");
-        let resolved = ok(&cfg, "/images/public/a.jpg/w640.webp", Some(&query));
-        assert!(resolved.versioned, "query {query:?}");
-    }
-}
-
-// --- Empty, overlong, percent-encoded, or non-canonical `v` values return
-// --- 400 (InvalidVersion).
-
-#[test]
-fn invalid_v_values_are_rejected() {
-    let cfg = base_config();
-    let overlong = "x".repeat(129);
-    let queries: Vec<String> = vec![
-        "v=".to_string(),          // empty
-        "v".to_string(),           // present but valueless
-        format!("v={overlong}"),   // overlong (129)
-        "v=%41".to_string(),       // percent-encoded (would be 'A')
-        "v=abc%2E".to_string(),    // percent-encoded dot
-        "v=a%".to_string(),        // stray percent
-        "v=100%".to_string(),      // trailing percent
-        "v=a b".to_string(),       // space
-        "v=a+b".to_string(),       // '+' is not unreserved
-        "v=a/b".to_string(),       // slash
-        "v=a\\b".to_string(),      // backslash
-        "v=a=b".to_string(),       // '='
-        "v=a!".to_string(),        // '!'
-        "v=caf\u{e9}".to_string(), // non-ASCII
-        "v=\u{7}".to_string(),     // control character
-    ];
-    for query in &queries {
-        expect_err(
-            &cfg,
-            "/images/public/a.jpg/w640.webp",
-            Some(query),
-            RequestError::InvalidVersion,
-        );
-    }
-}
-
-// --- Repeated `v` and unknown query parameters return 400 (InvalidQuery).
-
-#[test]
-fn repeated_v_and_unknown_query_parameters_are_rejected() {
+fn any_query_parameter_is_rejected() {
     let cfg = base_config();
     for query in [
+        "v=7d91c2", // the former version token is no longer special
+        "v=1",
+        "v=",
+        "v",
+        "v=%41",
         "v=1&v=2",
-        "v=1&v=1",
         "foo=1",
         "foo",
         "=x",
         "=",
-        "V=1", // case-sensitive
-        "vv=1",
-        "v =1",
-        "%76=1", // encoded 'v' key is not the literal key "v"
+        "V=1",
+        "%76=1",
         "v=1&foo=2",
-        "foo=1&v=1",
-        "v=1&",
-        "&v=1",
         "&",
         "w=640",
     ] {
@@ -402,75 +318,6 @@ fn repeated_v_and_unknown_query_parameters_are_rejected() {
             Some(query),
             RequestError::InvalidQuery,
         );
-    }
-}
-
-// --- `version_token` modes: `ignore` keeps the grammar but never marks a
-// --- request versioned; `reject` treats `v` like any unknown parameter.
-
-fn config_with_version_token(mode: VersionTokenMode) -> AppConfig {
-    let mut cfg = base_config();
-    cfg.version_token = mode;
-    cfg
-}
-
-#[test]
-fn ignore_mode_accepts_a_valid_v_but_never_marks_the_request_versioned() {
-    let cfg = config_with_version_token(VersionTokenMode::Ignore);
-    for v in ["7d91c2", "a", &"x".repeat(128)] {
-        let query = format!("v={v}");
-        let resolved = ok(&cfg, "/images/public/a.jpg/w640.webp", Some(&query));
-        assert!(!resolved.versioned, "query {query:?}");
-    }
-    // Everything except the versioned flag resolves exactly as in accept.
-    let accepted = ok(
-        &base_config(),
-        "/images/public/a.jpg/w640.webp",
-        Some("v=7d91c2"),
-    );
-    let ignored = ok(&cfg, "/images/public/a.jpg/w640.webp", Some("v=7d91c2"));
-    assert_eq!(accepted.mount, ignored.mount);
-    assert_eq!(accepted.upstream_key, ignored.upstream_key);
-    assert_eq!(accepted.transform, ignored.transform);
-}
-
-#[test]
-fn ignore_mode_still_enforces_the_v_grammar() {
-    let cfg = config_with_version_token(VersionTokenMode::Ignore);
-    let cases = [
-        ("v=".to_string(), RequestError::InvalidVersion),
-        ("v=%41".to_string(), RequestError::InvalidVersion),
-        (
-            format!("v={}", "x".repeat(129)),
-            RequestError::InvalidVersion,
-        ),
-        ("v=1&v=2".to_string(), RequestError::InvalidQuery),
-        ("foo=1".to_string(), RequestError::InvalidQuery),
-    ];
-    for (query, expected) in cases {
-        expect_err(
-            &cfg,
-            "/images/public/a.jpg/w640.webp",
-            Some(&query),
-            expected,
-        );
-    }
-}
-
-#[test]
-fn reject_mode_rejects_any_v_and_accepts_a_missing_one() {
-    let cfg = config_with_version_token(VersionTokenMode::Reject);
-    for query in ["v=7d91c2", "v=1", "v=", "v", "v=%41", "v=1&v=2"] {
-        expect_err(
-            &cfg,
-            "/images/public/a.jpg/w640.webp",
-            Some(query),
-            RequestError::InvalidQuery,
-        );
-    }
-    for query in [None, Some("")] {
-        let resolved = ok(&cfg, "/images/public/a.jpg/w640.webp", query);
-        assert!(!resolved.versioned, "query {query:?}");
     }
 }
 
@@ -535,16 +382,25 @@ fn target_over_8192_bytes_is_rejected() {
     let long = format!("/images/public/{}/w640.webp", "a".repeat(MAX_TARGET_BYTES));
     expect_err(&cfg, &long, None, RequestError::TargetTooLong);
 
-    // A valid request padded to exactly the limit is accepted; one more
-    // byte is not. Query bytes and the '?' separator count.
+    // A valid path padded to exactly the limit is accepted; one more byte
+    // is not.
     let suffix = "/w640.webp";
-    let query = "v=7d91c2";
     let head = "/images/public/";
+    let pad = MAX_TARGET_BYTES - head.len() - suffix.len();
+    let path = format!("{head}{}{suffix}", "a".repeat(pad));
+    assert_eq!(path.len(), MAX_TARGET_BYTES);
+    ok(&cfg, &path, None);
+
+    let path_plus_one = format!("{head}{}{suffix}", "a".repeat(pad + 1));
+    expect_err(&cfg, &path_plus_one, None, RequestError::TargetTooLong);
+
+    // Query bytes and the '?' separator count: a target within the limit
+    // fails on its query, one byte over fails on its length.
+    let query = "v=7d91c2";
     let pad = MAX_TARGET_BYTES - head.len() - suffix.len() - 1 - query.len();
     let path = format!("{head}{}{suffix}", "a".repeat(pad));
     assert_eq!(path.len() + 1 + query.len(), MAX_TARGET_BYTES);
-    let resolved = ok(&cfg, &path, Some(query));
-    assert!(resolved.versioned);
+    expect_err(&cfg, &path, Some(query), RequestError::InvalidQuery);
 
     let path_plus_one = format!("{head}{}{suffix}", "a".repeat(pad + 1));
     expect_err(
@@ -952,18 +808,4 @@ fn literal_and_encoded_traversal_is_rejected() {
             .joined(),
         "a%20b"
     );
-}
-
-// --- The versioned flag composes with everything else.
-
-#[test]
-fn versioned_and_unversioned_requests_resolve_identically_except_the_flag() {
-    let cfg = base_config();
-    let unversioned = ok(&cfg, "/images/public/a.jpg/w640,q60.webp", None);
-    let versioned = ok(&cfg, "/images/public/a.jpg/w640,q60.webp", Some("v=7d91c2"));
-    assert!(!unversioned.versioned);
-    assert!(versioned.versioned);
-    assert_eq!(unversioned.mount, versioned.mount);
-    assert_eq!(unversioned.upstream_key, versioned.upstream_key);
-    assert_eq!(unversioned.transform, versioned.transform);
 }

@@ -265,8 +265,8 @@ fn assert_no_version_in_query(recorded: &Recorded) {
     for param in &params {
         let name = param.split('=').next().unwrap_or(param);
         assert!(
-            !name.eq_ignore_ascii_case("versionId") && name != "v",
-            "query must never carry a version token, got {:?}",
+            !name.eq_ignore_ascii_case("versionId"),
+            "query must never carry a versionId, got {:?}",
             recorded.query
         );
     }

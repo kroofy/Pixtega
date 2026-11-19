@@ -191,9 +191,10 @@ Do not serve production traffic straight off a `NONE`-auth Function URL.
 Put CloudFront in front of it:
 
 - Create a CloudFront distribution with the Function URL domain as the
-  origin. The service's `Cache-Control` policy (year-long immutable for
-  versioned successes, bounded TTLs for the rest) is designed for exactly
-  this; most traffic never reaches the function. Unversioned 200s also
+  origin. The service's `Cache-Control` policy (up to
+  year-long immutable for successes, a bounded TTL for 404s, `no-store`
+  for other errors) is designed for exactly
+  this; most traffic never reaches the function. 200s also
   carry an `ETag` when the source exposes an object identity, so a CDN
   revalidation can be answered `304` without a re-derive.
 - Lock the origin to CloudFront: switch the Function URL to
@@ -212,13 +213,13 @@ Put CloudFront in front of it:
 FUNCTION_URL=$(aws lambda get-function-url-config \
   --function-name pixtega --query FunctionUrl --output text --region "$AWS_REGION")
 
-curl -o out.webp "${FUNCTION_URL}images/fixtures/photos/example.jpg/w640.webp"
+curl -o out.webp "${FUNCTION_URL}images/fixtures/photos/example.6acca6c1.jpg/w640.webp"
 file out.webp   # RIFF ... Web/P image
 ```
 
 The example config's `fixtures` mount serves images bundled in the image at
 `/app/fixtures`, so this works before any S3 setup. Then request through an
-S3 mount, e.g. `${FUNCTION_URL}images/photos/cat.jpg/w1280.webp?v=1`.
+S3 mount, e.g. `${FUNCTION_URL}images/photos/cat.3f9a1c7e.jpg/w1280.webp`.
 
 ## Caveats
 

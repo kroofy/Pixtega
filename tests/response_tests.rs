@@ -22,7 +22,6 @@ use image::RgbImage;
 use pixtega::app::{build_router, AppState, ProcessFn, REQUEST_TIMEOUT_MESSAGE};
 use pixtega::config::{
     AppConfig, FilesystemSourceConfig, FormatPolicy, HttpSourceConfig, SourceConfig,
-    VersionTokenMode,
 };
 use pixtega::errors::ProcessError;
 use pixtega::processor::init_vips;
@@ -202,7 +201,7 @@ fn upstream_response_with_headers(
 // App under test
 // ---------------------------------------------------------------------------
 
-const UNVERSIONED_TTL: u64 = 777;
+const SUCCESS_TTL: u64 = 777;
 const NOT_FOUND_TTL: u64 = 55;
 
 fn test_config(sources: Vec<SourceConfig>, download_timeout_ms: u64) -> AppConfig {
@@ -246,9 +245,9 @@ fn test_config_with_deadline(
         request_timeout_ms,
         max_redirects: 3,
         max_concurrent_derivations: 4,
-        unversioned_success_ttl_seconds: UNVERSIONED_TTL,
+        success_ttl_seconds: SUCCESS_TTL,
+        success_immutable: false,
         not_found_ttl_seconds: NOT_FOUND_TTL,
-        version_token: VersionTokenMode::Accept,
         formats,
         sources,
     }
@@ -309,15 +308,9 @@ async fn serve_state(state: Arc<AppState>) -> SocketAddr {
 /// A tempdir-backed filesystem Source with one real generated JPEG at
 /// `photo.jpg`, plus the app serving it.
 async fn spawn_filesystem_app() -> (tempfile::TempDir, SocketAddr) {
-    spawn_filesystem_app_with(VersionTokenMode::Accept).await
-}
-
-/// Same as [`spawn_filesystem_app`], with an explicit `version_token` mode.
-async fn spawn_filesystem_app_with(mode: VersionTokenMode) -> (tempfile::TempDir, SocketAddr) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("photo.jpg"), jpeg_fixture(800, 400)).unwrap();
-    let mut config = test_config(vec![filesystem_source(dir.path())], 10_000);
-    config.version_token = mode;
+    let config = test_config(vec![filesystem_source(dir.path())], 10_000);
     let addr = spawn_app(config).await;
     (dir, addr)
 }
@@ -373,19 +366,15 @@ fn assert_no_store(response: &HttpResponse) {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn versioned_success_has_content_type_immutable_policy_and_security_headers() {
+async fn success_has_content_type_ttl_policy_and_security_headers() {
     let (_dir, addr) = spawn_filesystem_app().await;
     for (transform, content_type) in [
         ("w320.webp", "image/webp"),
         ("w320.avif", "image/avif"),
         ("w320.jpeg", "image/jpeg"),
     ] {
-        let response = send_request(
-            addr,
-            "GET",
-            &format!("/images/files/photo.jpg/{transform}?v=abc-123"),
-        )
-        .await;
+        let response =
+            send_request(addr, "GET", &format!("/images/files/photo.jpg/{transform}")).await;
         assert_eq!(response.status, 200, "transform {transform}");
         assert_eq!(
             response.header("content-type"),
@@ -394,7 +383,7 @@ async fn versioned_success_has_content_type_immutable_policy_and_security_header
         );
         assert_eq!(
             response.header("cache-control"),
-            Some("public, max-age=31536000, immutable"),
+            Some(format!("public, max-age={SUCCESS_TTL}").as_str()),
             "transform {transform}"
         );
         assert_security_headers(&response);
@@ -410,22 +399,51 @@ async fn versioned_success_has_content_type_immutable_policy_and_security_header
 }
 
 #[tokio::test]
-async fn unversioned_success_uses_the_short_ttl_and_is_never_immutable() {
+async fn success_uses_the_configured_ttl_and_is_not_immutable_by_default() {
     let (_dir, addr) = spawn_filesystem_app().await;
     let response = send_request(addr, "GET", "/images/files/photo.jpg/w320.webp").await;
     assert_eq!(response.status, 200);
     let cache_control = response.header("cache-control").expect("cache-control");
-    assert_eq!(cache_control, format!("public, max-age={UNVERSIONED_TTL}"));
+    assert_eq!(cache_control, format!("public, max-age={SUCCESS_TTL}"));
     assert!(
         !cache_control.contains("immutable"),
-        "an unversioned response must not include `immutable`, got {cache_control:?}"
+        "`immutable` is opt-in, got {cache_control:?}"
     );
     assert_security_headers(&response);
     assert_eq!(&response.body[..4], b"RIFF", "WebP container signature");
-    assert!(
-        response.header("etag").is_some(),
-        "unversioned success still has ETag"
+    assert!(response.header("etag").is_some(), "success has ETag");
+}
+
+#[tokio::test]
+async fn success_immutable_marks_200_and_304_immutable_but_never_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("photo.jpg"), jpeg_fixture(800, 400)).unwrap();
+    let mut config = test_config(vec![filesystem_source(dir.path())], 10_000);
+    config.success_ttl_seconds = 31_536_000;
+    config.success_immutable = true;
+    let addr = spawn_app(config).await;
+    let policy = "public, max-age=31536000, immutable";
+
+    let target = "/images/files/photo.jpg/w320.webp";
+    let ok = send_request(addr, "GET", target).await;
+    assert_eq!(ok.status, 200);
+    assert_eq!(ok.header("cache-control"), Some(policy));
+
+    let etag = ok.header("etag").expect("etag").to_string();
+    let revalidated =
+        send_request_with_headers(addr, "GET", target, &[("If-None-Match", &etag)]).await;
+    assert_eq!(revalidated.status, 304);
+    assert_eq!(revalidated.header("cache-control"), Some(policy));
+
+    let missing = send_request(addr, "GET", "/images/files/nope.jpg/w320.webp").await;
+    assert_eq!(missing.status, 404);
+    assert_eq!(
+        missing.header("cache-control"),
+        Some(format!("public, max-age={NOT_FOUND_TTL}").as_str())
     );
+    let invalid = send_request(addr, "GET", "/images/files/photo.jpg/w123.webp").await;
+    assert_eq!(invalid.status, 400);
+    assert_no_store(&invalid);
 }
 
 // ---------------------------------------------------------------------------
@@ -449,10 +467,10 @@ async fn matching_if_none_match_is_304_without_a_body() {
     assert_eq!(revalidated.status, 304);
     assert!(revalidated.body.is_empty(), "304 has no body");
     assert_eq!(revalidated.header("etag"), Some(etag.as_str()));
-    let unversioned_policy = format!("public, max-age={UNVERSIONED_TTL}");
+    let success_policy = format!("public, max-age={SUCCESS_TTL}");
     assert_eq!(
         revalidated.header("cache-control"),
-        Some(unversioned_policy.as_str())
+        Some(success_policy.as_str())
     );
     assert_eq!(revalidated.header("content-type"), Some("image/webp"));
     assert_eq!(revalidated.header("content-length"), None);
@@ -800,63 +818,13 @@ async fn identify_timeout_is_still_504() {
 }
 
 // ---------------------------------------------------------------------------
-// version_token modes: `ignore` and `reject` (`accept` is asserted above)
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn ignore_mode_serves_a_versioned_url_with_the_unversioned_policy() {
-    let (_dir, addr) = spawn_filesystem_app_with(VersionTokenMode::Ignore).await;
-    let response = send_request(addr, "GET", "/images/files/photo.jpg/w320.webp?v=abc-123").await;
-    assert_eq!(response.status, 200, "a well-formed v must not 400");
-    let cache_control = response.header("cache-control").expect("cache-control");
-    assert_eq!(cache_control, format!("public, max-age={UNVERSIONED_TTL}"));
-    assert!(
-        !cache_control.contains("immutable"),
-        "ignore mode must never upgrade to immutable, got {cache_control:?}"
-    );
-    assert!(!response.body.is_empty(), "derived image body");
-
-    // The grammar is unchanged: malformed queries are still 400.
-    for target in [
-        "/images/files/photo.jpg/w320.webp?v=%41",
-        "/images/files/photo.jpg/w320.webp?x=1",
-    ] {
-        let response = send_request(addr, "GET", target).await;
-        assert_eq!(response.status, 400, "target {target}");
-        assert_no_store(&response);
-    }
-}
-
-#[tokio::test]
-async fn reject_mode_rejects_any_v_and_still_serves_unversioned_urls() {
-    let (_dir, addr) = spawn_filesystem_app_with(VersionTokenMode::Reject).await;
-    for target in [
-        "/images/files/photo.jpg/w320.webp?v=abc-123",
-        "/images/files/photo.jpg/w320.webp?v=",
-    ] {
-        let response = send_request(addr, "GET", target).await;
-        assert_eq!(response.status, 400, "target {target}");
-        assert_no_store(&response);
-        assert_error_body(&response);
-        assert_security_headers(&response);
-    }
-
-    let response = send_request(addr, "GET", "/images/files/photo.jpg/w320.webp").await;
-    assert_eq!(response.status, 200, "a missing v is always fine");
-    assert_eq!(
-        response.header("cache-control"),
-        Some(format!("public, max-age={UNVERSIONED_TTL}").as_str())
-    );
-}
-
-// ---------------------------------------------------------------------------
 // 404: absence, the only cacheable error
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn absence_is_a_cacheable_404_with_the_configured_ttl() {
     let (_dir, addr) = spawn_filesystem_app().await;
-    let response = send_request(addr, "GET", "/images/files/nope.jpg/w320.webp?v=1").await;
+    let response = send_request(addr, "GET", "/images/files/nope.jpg/w320.webp").await;
     assert_eq!(response.status, 404);
     assert_eq!(
         response.header("cache-control"),
@@ -940,7 +908,7 @@ async fn a_processing_deadline_expiry_is_a_non_cacheable_504_and_head_matches_ge
     });
     let (addr, _state) = spawn_app_with_processor(config, process).await;
 
-    let target = "/images/files/photo.jpg/w320.webp?v=abc-123";
+    let target = "/images/files/photo.jpg/w320.webp";
     let get = send_request(addr, "GET", target).await;
     assert_eq!(get.status, 504);
     assert_no_store(&get);
@@ -1118,7 +1086,7 @@ async fn invalid_requests_are_non_cacheable_400_json_errors() {
         "/images/files/photo.jpg/w320,q82.webp", // quality equals default
         "/images/nope/photo.jpg/w320.webp",      // unknown mount
         "/images/files/%2E%2E/photo.jpg/w320.webp", // encoded traversal
-        "/images/files/photo.jpg/w320.webp?v=1&v=2", // repeated v
+        "/images/files/photo.jpg/w320.webp?v=1", // the removed version token
         "/images/files/photo.jpg/w320.webp?x=1", // unknown query parameter
     ] {
         let response = send_request(addr, "GET", target).await;
@@ -1153,8 +1121,8 @@ async fn non_get_head_methods_are_non_cacheable_405_with_allow_get_head() {
 async fn head_on_a_valid_derived_url_matches_get_with_an_empty_body() {
     let (_dir, addr) = spawn_filesystem_app().await;
     for target in [
-        "/images/files/photo.jpg/w320.webp?v=abc-123", // versioned
-        "/images/files/photo.jpg/w320.webp",           // unversioned
+        "/images/files/photo.jpg/w320.webp",
+        "/images/files/photo.jpg/w320.avif",
     ] {
         let get = send_request(addr, "GET", target).await;
         let head = send_request(addr, "HEAD", target).await;
@@ -1187,8 +1155,8 @@ async fn head_on_a_valid_derived_url_matches_get_with_an_empty_body() {
 async fn head_on_errors_matches_get_status_and_headers_with_an_empty_body() {
     let (_dir, addr) = spawn_filesystem_app().await;
     for (target, status) in [
-        ("/images/files/nope.jpg/w320.webp?v=1", 404), // absence
-        ("/images/files/photo.jpg/w123.webp", 400),    // disallowed width
+        ("/images/files/nope.jpg/w320.webp", 404),  // absence
+        ("/images/files/photo.jpg/w123.webp", 400), // disallowed width
     ] {
         let get = send_request(addr, "GET", target).await;
         let head = send_request(addr, "HEAD", target).await;

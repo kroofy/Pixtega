@@ -1,8 +1,7 @@
 //! Structured JSON logs on standard output.
 //!
 //! One completion event per request. Fields are stable and low-cardinality;
-//! response bodies, credentials, and the source-version query value are
-//! never logged. Source failures with an internal `detail` emit a separate
+//! response bodies and credentials are never logged. Source failures with an internal `detail` emit a separate
 //! warn event immediately before the completion line.
 
 use serde::Serialize;

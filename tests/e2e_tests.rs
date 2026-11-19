@@ -449,7 +449,7 @@ fn decode(bytes: &[u8]) -> image::DynamicImage {
 // Configuration text
 // ---------------------------------------------------------------------------
 
-const UNVERSIONED_TTL: u64 = 900;
+const SUCCESS_TTL: u64 = 900;
 const NOT_FOUND_TTL: u64 = 66;
 
 struct ConfigOptions {
@@ -484,7 +484,7 @@ download_timeout_ms = {download_timeout_ms}
 request_timeout_ms = {request_timeout_ms}
 max_redirects = 3
 max_concurrent_derivations = {max_concurrent_derivations}
-unversioned_success_ttl_seconds = {UNVERSIONED_TTL}
+success_ttl_seconds = {SUCCESS_TTL}
 not_found_ttl_seconds = {NOT_FOUND_TTL}
 
 [formats.webp]
@@ -540,15 +540,8 @@ async fn e2e_jpeg_source_derives_webp_avif_and_jpeg_preserving_aspect_ratio() {
     let dir = tempfile::tempdir().unwrap();
     let service = spawn_http_service(dir.path(), &fixture, ConfigOptions::default()).await;
 
-    let version = "vtok123secret";
-
     // Item 1: source JPEG -> smaller WebP.
-    let webp = send_request(
-        service.addr,
-        "GET",
-        &format!("/images/pub/photos/pic.jpg/w320.webp?v={version}"),
-    )
-    .await;
+    let webp = send_request(service.addr, "GET", "/images/pub/photos/pic.jpg/w320.webp").await;
     assert_eq!(webp.status, 200);
     assert_eq!(webp.header("content-type"), Some("image/webp"));
     assert!(is_webp(&webp.body), "WebP container signature");
@@ -561,29 +554,19 @@ async fn e2e_jpeg_source_derives_webp_avif_and_jpeg_preserving_aspect_ratio() {
     );
 
     // Item 2: the same source as AVIF and JPEG.
-    let avif = send_request(
-        service.addr,
-        "GET",
-        &format!("/images/pub/photos/pic.jpg/w320.avif?v={version}"),
-    )
-    .await;
+    let avif = send_request(service.addr, "GET", "/images/pub/photos/pic.jpg/w320.avif").await;
     assert_eq!(avif.status, 200);
     assert_eq!(avif.header("content-type"), Some("image/avif"));
     assert!(is_avif(&avif.body), "AVIF ftyp brand");
 
-    let jpeg = send_request(
-        service.addr,
-        "GET",
-        &format!("/images/pub/photos/pic.jpg/w320.jpeg?v={version}"),
-    )
-    .await;
+    let jpeg = send_request(service.addr, "GET", "/images/pub/photos/pic.jpg/w320.jpeg").await;
     assert_eq!(jpeg.status, 200);
     assert_eq!(jpeg.header("content-type"), Some("image/jpeg"));
     assert!(is_jpeg(&jpeg.body), "JPEG SOI marker");
     assert_eq!(decode(&jpeg.body).dimensions(), (320, 160));
 
     // Completion logs: one line per request, required fields, closed
-    // outcomes, and never the version token value.
+    // outcomes.
     let events = wait_for_completions(&service, 3).await;
     assert_eq!(events.len(), 3, "exactly one completion event per request");
     for (event, format) in events.iter().zip(["webp", "avif", "jpeg"]) {
@@ -597,7 +580,6 @@ async fn e2e_jpeg_source_derives_webp_avif_and_jpeg_preserving_aspect_ratio() {
         assert!(event["input_bytes"].as_u64().unwrap() > 0);
         assert!(event["output_bytes"].as_u64().unwrap() > 0);
     }
-    assert_no_line_contains(&service, version);
 }
 
 #[tokio::test]
@@ -613,7 +595,7 @@ async fn e2e_source_narrower_than_the_target_is_not_enlarged() {
     let response = send_request(
         service.addr,
         "GET",
-        "/images/pub/photos/small.jpg/w640.webp?v=1",
+        "/images/pub/photos/small.jpg/w640.webp",
     )
     .await;
     assert_eq!(response.status, 200);
@@ -633,7 +615,7 @@ async fn e2e_missing_source_returns_a_cacheable_404() {
     let response = send_request(
         service.addr,
         "GET",
-        "/images/pub/photos/absent.jpg/w320.webp?v=1",
+        "/images/pub/photos/absent.jpg/w320.webp",
     )
     .await;
     assert_eq!(response.status, 404);
@@ -766,13 +748,15 @@ async fn e2e_invalid_requests_never_reach_the_fixture_server() {
         "/images/pub/photos/pic.jpg/w320,q82.webp", // quality equals default
         "/images/nosuch/photos/pic.jpg/w320.webp", // unknown mount
         "/images/pub/%2E%2E/pic.jpg/w320.webp",    // encoded traversal
-        "/images/pub/photos/pic.jpg/w320.webp?v=%41", // encoded v
+        "/images/pub/photos/pic.jpg/w320.webp?v=abc123", // removed version token
         "/images/pub/photos/pic.jpg/w320.webp?bad=1", // unknown query
     ] {
         let response = send_request(service.addr, "GET", target).await;
         assert_eq!(response.status, 400, "target {target}");
     }
     let events = wait_for_completions(&service, 9).await;
+    // A rejected query value is never logged.
+    assert_no_line_contains(&service, "abc123");
     for event in &events {
         assert_completion_shape(event);
         assert_eq!(event["outcome"], "rejected_request");
@@ -830,11 +814,11 @@ root = "./root"
 }
 
 // ---------------------------------------------------------------------------
-// Item 12: omitting v changes the cache policy, not the pixels
+// Item 12: a success carries the configured TTL; `immutable` is opt-in
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn e2e_omitting_v_returns_the_same_pixels_with_the_shorter_policy() {
+async fn e2e_success_uses_the_configured_ttl_and_is_not_immutable_by_default() {
     let fixture = Fixture::start(HashMap::from([(
         "/photos/pic.jpg".to_string(),
         Script::Bytes(ok_response(&jpeg_fixture(800, 400))),
@@ -843,43 +827,12 @@ async fn e2e_omitting_v_returns_the_same_pixels_with_the_shorter_policy() {
     let dir = tempfile::tempdir().unwrap();
     let service = spawn_http_service(dir.path(), &fixture, ConfigOptions::default()).await;
 
-    let versioned = send_request(
-        service.addr,
-        "GET",
-        "/images/pub/photos/pic.jpg/w320.webp?v=abc123",
-    )
-    .await;
-    let unversioned =
-        send_request(service.addr, "GET", "/images/pub/photos/pic.jpg/w320.webp").await;
-
-    assert_eq!(versioned.status, 200);
-    assert_eq!(unversioned.status, 200);
-    assert_eq!(
-        versioned.header("cache-control"),
-        Some("public, max-age=31536000, immutable")
-    );
-    let unversioned_policy = unversioned.header("cache-control").unwrap();
-    assert_eq!(
-        unversioned_policy,
-        format!("public, max-age={UNVERSIONED_TTL}")
-    );
-    assert!(!unversioned_policy.contains("immutable"));
-
-    // Same Derived Image: compare decoded properties, not lossy bytes.
-    let a = decode(&versioned.body).to_rgba8();
-    let b = decode(&unversioned.body).to_rgba8();
-    assert_eq!(a.dimensions(), b.dimensions());
-    assert_eq!(a.dimensions(), (320, 160));
-    for (x, y) in [(10, 10), (160, 80), (300, 150)] {
-        let pa = a.get_pixel(x, y);
-        let pb = b.get_pixel(x, y);
-        for channel in 0..4 {
-            assert!(
-                pa[channel].abs_diff(pb[channel]) <= 2,
-                "pixel ({x},{y}) channel {channel}: {pa:?} vs {pb:?}"
-            );
-        }
-    }
+    let response = send_request(service.addr, "GET", "/images/pub/photos/pic.jpg/w320.webp").await;
+    assert_eq!(response.status, 200);
+    let policy = response.header("cache-control").unwrap();
+    assert_eq!(policy, format!("public, max-age={SUCCESS_TTL}"));
+    assert!(!policy.contains("immutable"));
+    assert_eq!(decode(&response.body).dimensions(), (320, 160));
 }
 
 // ---------------------------------------------------------------------------
@@ -937,7 +890,7 @@ async fn e2e_concurrent_fixture_requests_never_exceed_max_derivations() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn e2e_s3_source_serves_the_same_contract_and_key_excludes_v() {
+async fn e2e_s3_source_serves_the_same_contract_with_the_exact_key() {
     let bucket = "e2e-image-bucket";
     let jpeg = jpeg_fixture(800, 400);
     let mut object = format!(
@@ -981,18 +934,13 @@ allow_private_destinations = true
     )
     .await;
 
-    let response = send_request(
-        service.addr,
-        "GET",
-        "/images/arch/photos/pic.jpg/w320.webp?v=s3token99",
-    )
-    .await;
+    let response = send_request(service.addr, "GET", "/images/arch/photos/pic.jpg/w320.webp").await;
     assert_eq!(response.status, 200);
     assert!(is_webp(&response.body));
     assert_eq!(decode(&response.body).dimensions(), (320, 160));
 
-    // The observed S3 key is Key Prefix + source path, and neither the path
-    // nor the query carries the version token.
+    // The observed S3 key is Key Prefix + source path, and the query never
+    // carries an S3 versionId.
     let hits = fixture.hits();
     assert_eq!(hits.len(), 1);
     let (path, query) = match hits[0].split_once('?') {
@@ -1003,12 +951,11 @@ allow_private_destinations = true
     for param in query.unwrap_or("").split('&').filter(|p| !p.is_empty()) {
         let name = param.split('=').next().unwrap_or(param);
         assert!(
-            !name.eq_ignore_ascii_case("versionId") && name != "v",
-            "S3 request must not carry a version token, got {:?}",
+            !name.eq_ignore_ascii_case("versionId"),
+            "S3 request must not carry a versionId, got {:?}",
             hits[0]
         );
     }
-    assert_no_line_contains(&service, "s3token99");
 }
 
 // ---------------------------------------------------------------------------
@@ -1093,7 +1040,7 @@ allow_private_destinations = true
     let response = send_request(
         service.addr,
         "GET",
-        "/images/secure/photos/pic.jpg/w320.webp?v=tls1",
+        "/images/secure/photos/pic.jpg/w320.webp",
     )
     .await;
     assert_eq!(response.status, 200);

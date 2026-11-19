@@ -13,7 +13,7 @@ download_timeout_ms = 30000
 request_timeout_ms = 300000
 max_redirects = 3
 max_concurrent_derivations = 8
-unversioned_success_ttl_seconds = 3600
+success_ttl_seconds = 3600
 not_found_ttl_seconds = 60
 
 [formats.webp]

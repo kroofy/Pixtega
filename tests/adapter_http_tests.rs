@@ -280,7 +280,7 @@ async fn success_returns_bytes_and_builds_percent_encoded_path() {
     let requests = fixture.recorded();
     assert_eq!(requests.len(), 1);
     // Exact upstream target: base path + percent-encoded decoded segments,
-    // no query string, and in particular no `v` anywhere.
+    // no query string.
     assert_eq!(requests[0].path, encoded_path);
     assert_eq!(requests[0].query, None);
     assert_eq!(requests[0].header("accept-encoding"), Some("identity"));

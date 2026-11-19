@@ -5,7 +5,7 @@
 #
 # Builds the OCI image from the repository Dockerfile, runs it on an
 # ephemeral loopback port, waits for the service's "listening" startup line,
-# then requests /images/fixtures/photos/example.jpg/w640.webp and asserts a
+# then requests /images/fixtures/photos/example.6acca6c1.jpg/w640.webp and asserts a
 # 200 response with Content-Type: image/webp and a WebP (RIFF) body.
 #
 # Requires Docker and curl. Exits non-zero on any failure.
@@ -63,7 +63,7 @@ if ! docker logs "$CONTAINER_NAME" 2>/dev/null | grep -q '"event":"listening"'; 
 fi
 
 echo "==> requesting the fixtures-mount success case"
-TARGET="${BASE_URL}/images/fixtures/photos/example.jpg/w640.webp"
+TARGET="${BASE_URL}/images/fixtures/photos/example.6acca6c1.jpg/w640.webp"
 BODY_FILE="${WORK_DIR}/derived.webp"
 HEADERS_FILE="${WORK_DIR}/headers.txt"
 STATUS="$(curl -sS -o "$BODY_FILE" -D "$HEADERS_FILE" -w '%{http_code}' "$TARGET")"
