@@ -98,7 +98,8 @@ impl S3Source {
 
         // Advertised length check; enforced again below while streaming
         // because the transport may deliver more than it advertised.
-        if let Some(advertised) = output.content_length() {
+        let advertised = output.content_length();
+        if let Some(advertised) = advertised {
             if advertised < 0 || advertised as u64 > self.limits.max_bytes {
                 return Err(SourceError::TooLarge {
                     upstream_status: Some(200),
@@ -108,7 +109,10 @@ impl S3Source {
 
         let identity = s3_identity(output.e_tag(), output.version_id());
         let mut body = output.body;
-        let mut bytes: Vec<u8> = Vec::new();
+        // Preallocate from the advertised length (already bounded by
+        // max_bytes above) so large objects avoid the repeated
+        // grow-and-copy of an amortized Vec.
+        let mut bytes: Vec<u8> = Vec::with_capacity(advertised.unwrap_or(0) as usize);
         loop {
             match body.try_next().await {
                 Ok(Some(chunk)) => {

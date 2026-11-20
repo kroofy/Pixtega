@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use image::RgbImage;
-use pixtega::app::{build_router, AppState, ProcessFn, REQUEST_TIMEOUT_MESSAGE};
+use pixtega::app::{build_router, reclaim_when_idle, AppState, ProcessFn, REQUEST_TIMEOUT_MESSAGE};
 use pixtega::config::{
     AppConfig, FilesystemSourceConfig, FormatPolicy, HttpSourceConfig, SourceConfig,
 };
@@ -1004,6 +1004,174 @@ async fn a_fetch_that_spends_the_whole_budget_never_starts_processing() {
         !started.load(Ordering::SeqCst),
         "processing must not start after the fetch exhausted the budget"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Idle memory reclaim
+// ---------------------------------------------------------------------------
+
+/// Short enough for a test, long enough that derivations released together
+/// always end well inside one quiet period.
+const RECLAIM_QUIET: Duration = Duration::from_millis(250);
+
+/// Run the idle reclaimer against `state` with a counting reclaim action.
+fn count_reclaims(state: &Arc<AppState>) -> Arc<AtomicUsize> {
+    let reclaims = Arc::new(AtomicUsize::new(0));
+    let counter = reclaims.clone();
+    tokio::spawn(reclaim_when_idle(state.clone(), RECLAIM_QUIET, move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+    }));
+    reclaims
+}
+
+/// Poll `counter` until it reaches `expected`, failing after five seconds.
+async fn wait_for_count(counter: &AtomicUsize, expected: usize, what: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while counter.load(Ordering::SeqCst) < expected {
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "expected {expected} {what}, saw {}",
+            counter.load(Ordering::SeqCst)
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+/// What gated derivations block on. It opens when dropped, so a failed
+/// assertion fails the test instead of hanging runtime shutdown on a worker
+/// thread nothing would ever release.
+struct Gate(Arc<AtomicBool>);
+
+impl Gate {
+    fn new() -> Gate {
+        Gate(Arc::new(AtomicBool::new(false)))
+    }
+
+    fn open(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    /// A blocking wait for the gate, for use inside a processor.
+    fn waiter(&self) -> impl Fn() + Send + Sync + 'static {
+        let open = self.0.clone();
+        move || {
+            while !open.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+}
+
+impl Drop for Gate {
+    fn drop(&mut self) {
+        self.open();
+    }
+}
+
+/// A burst of derivations is followed by exactly one reclaim, and only
+/// after a full quiet period: not one per derivation, none before any
+/// derivation ran, and none again while the service stays idle.
+#[tokio::test]
+async fn freed_memory_is_reclaimed_once_after_a_burst_goes_quiet() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("photo.jpg"), jpeg_fixture(64, 64)).unwrap();
+    let config = test_config(vec![filesystem_source(dir.path())], 10_000);
+
+    // Every derivation blocks on the gate.
+    let gate = Gate::new();
+    let entered = Arc::new(AtomicUsize::new(0));
+    let process: ProcessFn = {
+        let wait_for_gate = gate.waiter();
+        let entered = entered.clone();
+        Arc::new(move |_bytes, _transform, _megapixels| {
+            entered.fetch_add(1, Ordering::SeqCst);
+            wait_for_gate();
+            Ok(vec![0u8; 8])
+        })
+    };
+    let (addr, state) = spawn_app_with_processor(config, process).await;
+    let reclaims = count_reclaims(&state);
+
+    tokio::time::sleep(RECLAIM_QUIET * 2).await;
+    assert_eq!(
+        reclaims.load(Ordering::SeqCst),
+        0,
+        "an idle service that never derived anything has nothing to reclaim"
+    );
+
+    let burst: Vec<_> = (0..3)
+        .map(|_| {
+            tokio::spawn(async move {
+                send_request(addr, "GET", "/images/files/photo.jpg/w320.webp").await
+            })
+        })
+        .collect();
+    wait_for_count(&entered, 3, "derivations in the processor").await;
+    // No derivation can end before the gate opens, so the reclaim cannot
+    // be due sooner than one quiet period after this instant.
+    let opened = tokio::time::Instant::now();
+    gate.open();
+    for request in burst {
+        assert_eq!(request.await.unwrap().status, 200);
+    }
+
+    wait_for_count(&reclaims, 1, "reclaim(s)").await;
+    assert!(
+        opened.elapsed() >= RECLAIM_QUIET,
+        "the reclaim must wait out the quiet period, came after {:?}",
+        opened.elapsed()
+    );
+    tokio::time::sleep(RECLAIM_QUIET * 3).await;
+    assert_eq!(
+        reclaims.load(Ordering::SeqCst),
+        1,
+        "one reclaim per burst, and none while the service stays idle"
+    );
+}
+
+/// The quiet period running out is not enough: while any derivation is
+/// still in flight its scratch memory is in use, and reclaiming would only
+/// stall it on the allocator.
+#[tokio::test]
+async fn memory_is_not_reclaimed_while_a_derivation_is_in_flight() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("photo.jpg"), jpeg_fixture(64, 64)).unwrap();
+    let config = test_config(vec![filesystem_source(dir.path())], 10_000);
+
+    // The first derivation returns at once; the second blocks on the gate.
+    let gate = Gate::new();
+    let entered = Arc::new(AtomicUsize::new(0));
+    let process: ProcessFn = {
+        let wait_for_gate = gate.waiter();
+        let entered = entered.clone();
+        Arc::new(move |_bytes, _transform, _megapixels| {
+            if entered.fetch_add(1, Ordering::SeqCst) > 0 {
+                wait_for_gate();
+            }
+            Ok(vec![0u8; 8])
+        })
+    };
+    let (addr, state) = spawn_app_with_processor(config, process).await;
+    let reclaims = count_reclaims(&state);
+
+    let first = send_request(addr, "GET", "/images/files/photo.jpg/w320.webp").await;
+    assert_eq!(first.status, 200);
+    let second = tokio::spawn(async move {
+        send_request(addr, "GET", "/images/files/photo.jpg/w640.webp").await
+    });
+    wait_for_count(&entered, 2, "derivations in the processor").await;
+
+    // Several quiet periods pass since the first derivation ended.
+    tokio::time::sleep(RECLAIM_QUIET * 3).await;
+    assert_eq!(
+        reclaims.load(Ordering::SeqCst),
+        0,
+        "no reclaim while a derivation is in flight"
+    );
+
+    gate.open();
+    assert_eq!(second.await.unwrap().status, 200);
+    wait_for_count(&reclaims, 1, "reclaim(s)").await;
 }
 
 // ---------------------------------------------------------------------------

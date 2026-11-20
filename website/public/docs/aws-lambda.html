@@ -37,7 +37,7 @@
     <h1>Deploy on AWS Lambda</h1>
     <p class="lead">
       The recommended serverless path: a Lambda container image built from
-      <code>Dockerfile.lambda</code>, fronted by a Function URL. The image is
+      the Dockerfile's <code>lambda</code> target, fronted by a Function URL. The image is
       the standard container plus the AWS Lambda Web Adapter extension, which
       translates Lambda invocations into plain HTTP — the binary contains no
       Lambda-specific code and the same image runs on ECS, EC2, or locally.
@@ -46,7 +46,7 @@
     <h2 id="how-it-fits-together">How it fits together<a class="anchor" href="#how-it-fits-together" aria-label="Link to this section">#</a></h2>
     <ul>
       <li>
-        <strong><code>Dockerfile.lambda</code></strong> adds the
+        <strong>The <code>lambda</code> target</strong> adds the
         <a href="https://github.com/aws/aws-lambda-web-adapter">Lambda Web Adapter</a>
         as a Lambda extension and clears the default command, so configuration
         comes from the environment instead of a baked-in file.
@@ -89,7 +89,7 @@
 
     <h2 id="deployment-outline">Deployment outline<a class="anchor" href="#deployment-outline" aria-label="Link to this section">#</a></h2>
     <pre><code># 1. Build the Lambda image
-docker build -f Dockerfile.lambda --platform linux/amd64 -t pixtega-lambda .
+docker build --target lambda --platform linux/amd64 -t pixtega-lambda .
 
 # 2. Push to ECR
 docker tag pixtega-lambda "$ECR_REPO:latest"
@@ -158,11 +158,13 @@ curl -o out.webp "${FUNCTION_URL}images/fixtures/photos/example.6acca6c1.jpg/w64
       </li>
       <li>
         <strong>Cold starts.</strong> Each new execution environment loads
-        libvips, validates configuration, and verifies every enabled encoder,
-        so the first request is noticeably slower than warm ones. A CDN in
-        front absorbs most of this — the service's
-        <a href="/docs/api.html">cache policy</a> is designed for exactly
-        that.
+        the image's files, initializes libvips, validates configuration, and
+        verifies every enabled encoder, so the first request is slower than
+        warm ones. The image keeps that small: its libvips carries only the
+        codecs the service uses, so starting and answering the first request
+        reads 20 MB from the image. A CDN in front absorbs most of what remains —
+        the service's <a href="/docs/api.html">cache policy</a> is designed
+        for exactly that.
       </li>
       <li>
         <strong>Environment size.</strong> Lambda caps the function

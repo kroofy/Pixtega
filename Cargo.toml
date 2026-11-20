@@ -25,6 +25,13 @@ tokio = { version = "1", features = ["full"] }
 toml = "1.1"
 url = "2"
 
+# Whole-program LTO in one codegen unit: the binary is the largest file a
+# cold start reads from disk, and this nearly halves it (25.9 MB -> 13.8 MB).
+# Release builds take about twice as long for it.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff"] }
 rcgen = "0.14"

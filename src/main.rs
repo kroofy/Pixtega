@@ -1,5 +1,6 @@
-//! Process bootstrap: load configuration, initialize libvips, verify the
-//! enabled encoders, build the Source registry, and serve.
+//! Process bootstrap: load configuration, tune the allocator, initialize
+//! libvips, verify the enabled encoders, build the Source registry, and
+//! serve.
 
 // All FFI lives in the library crate (`processor::vips_ffi`); the binary
 // itself must stay entirely safe.
@@ -50,6 +51,9 @@ fn main() -> ExitCode {
         }
     };
 
+    // Before libvips or the runtime start any thread: arenas that already
+    // exist are not taken back by the cap.
+    processor::tune_allocator(cfg.max_concurrent_derivations);
     processor::init_vips();
     let enabled: Vec<_> = cfg.formats.keys().copied().collect();
     if let Err(err) = processor::verify_encoders(&enabled) {

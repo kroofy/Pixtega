@@ -24,8 +24,8 @@ Workers assets site):
 - [AWS Lambda](website/public/docs/aws-lambda.html) — recommended serverless path
 
 For deployment on AWS Lambda, see the step-by-step guide in
-[deploy/lambda/README.md](deploy/lambda/README.md) and the Lambda container
-image in [Dockerfile.lambda](Dockerfile.lambda).
+[deploy/lambda/README.md](deploy/lambda/README.md) and the `lambda` target
+of the [Dockerfile](Dockerfile).
 
 ## Quick start (bundled fixtures, no network)
 
@@ -262,12 +262,34 @@ docker run --rm -p 8080:8080 \
   pixtega /config/config.toml
 ```
 
+The image builds its own libvips with only the codecs the service uses
+(JPEG, PNG, WebP, AVIF) instead of installing the distribution's, which
+links every format libvips knows. On a cold page cache, starting and
+answering the first request reads 20 MB from disk instead of 62 MB, and
+the service idles at 25 MB of resident memory instead of 48 MB.
+`scripts/bench/coldstart.sh` measures both for any image.
+
+`docker stop` (SIGTERM) and Ctrl-C (SIGINT) are a graceful shutdown:
+requests already in flight are answered, then the process exits 0.
+
 ### AWS Lambda
 
-[Dockerfile.lambda](Dockerfile.lambda) builds the same image with the AWS
-Lambda Web Adapter extension, configured inline via the `CONFIG`
-environment variable. The full walkthrough (ECR, IAM, Function URL, curl
-smoke test) is in [deploy/lambda/README.md](deploy/lambda/README.md).
+The `lambda` target of the same [Dockerfile](Dockerfile)
+(`docker build --target lambda .`) is that image plus the AWS Lambda Web
+Adapter extension, configured inline via the `CONFIG` environment
+variable. The full walkthrough (ECR, IAM, Function URL, curl smoke test)
+is in [deploy/lambda/README.md](deploy/lambda/README.md).
+
+### Memory
+
+Decoding and encoding need scratch memory in proportion to the images
+being derived, and the allocator keeps it mapped for the next request
+rather than returning it each time. Once no derivation has run for five
+seconds the service hands that memory back to the operating system, so
+resident memory after a burst settles near its idle size instead of at
+the burst's peak. On glibc the service also sets the allocator's arena
+count to `max_concurrent_derivations` at startup, which takes precedence
+over a `MALLOC_ARENA_MAX` in the environment.
 
 ## JavaScript client
 
@@ -325,8 +347,9 @@ Full details in [docs/ci.md](docs/ci.md).
 - **CI** runs `./scripts/check.sh`, `cargo-audit` on `Cargo.lock`, and
   `./scripts/container-acceptance.sh` on every PR and push to `main`.
   Dependabot covers cargo, Actions, `js/` npm, and Dockerfile `FROM`
-  tags; native Ubuntu/libvips/libheif packages and Lambda adapter
-  releases are a manual rebuild/watch — see [docs/ci.md](docs/ci.md).
+  tags; the libvips source pin in the Dockerfile, native Ubuntu codec
+  packages, and Lambda adapter releases are a manual bump/rebuild/watch
+  — see [docs/ci.md](docs/ci.md).
 - **Mutation score**: the project threshold is ≥ 90%. The Mutants workflow
   (weekly on `main` + manual dispatch) runs the full `cargo mutants`
   suite, publishes the score in the run's job summary and a
@@ -337,7 +360,7 @@ Full details in [docs/ci.md](docs/ci.md).
   (badge above).
 - **Releases**: `git tag vX.Y.Z && git push origin vX.Y.Z` builds and
   pushes `ghcr.io/kroofy/pixtega` images (`X.Y.Z`, `X.Y`, `latest`, and
-  the `-lambda` variant from [Dockerfile.lambda](Dockerfile.lambda)) and
+  the `-lambda` variant from the Dockerfile's `lambda` target) and
   creates a GitHub Release with the binary tarball and SHA256 checksums
   attached.
 

@@ -13,12 +13,15 @@ third-party software with its own licenses.
 | [libwebp](https://chromium.googlesource.com/webm/libwebp) | BSD-3-Clause | WebP encoding/decoding |
 | libjpeg-turbo / libpng / other libvips delegates | various permissive | JPEG/PNG support |
 
-These libraries are not distributed in this repository. The container image
-installs them from Ubuntu 24.04 packages; their license texts ship with
-those packages under `/usr/share/doc/<package>/copyright`.
+These libraries are not distributed in this repository. The container
+images build libvips from its unmodified upstream release tarball (the
+version and SHA-256 are pinned in the `Dockerfile`) and ship its license at
+`/usr/local/share/doc/libvips/LICENSE`. Every other library is installed
+from Ubuntu 26.04 packages; their license texts ship with those packages
+under `/usr/share/doc/<package>/copyright`.
 
 libvips is LGPL: this project links it dynamically and does not modify it,
-which satisfies the LGPL for both the source build and the container image.
+which satisfies the LGPL for both the source build and the container images.
 
 ## Rust crates
 

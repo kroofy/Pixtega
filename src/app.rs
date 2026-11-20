@@ -10,7 +10,8 @@ use axum::extract::{Request, State};
 use axum::http::response::Builder;
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
-use tokio::sync::Semaphore;
+use tokio::signal::unix::{signal, SignalKind};
+use tokio::sync::{Notify, Semaphore};
 
 use crate::config::AppConfig;
 use crate::errors::{Outcome, ProcessError, RequestError, SourceError};
@@ -32,6 +33,11 @@ pub type ProcessFn =
 /// contains caller input.
 pub const REQUEST_TIMEOUT_MESSAGE: &str = "request timed out";
 
+/// How long derivations must have been quiet before [`reclaim_when_idle`]
+/// hands freed heap back. Long enough that steady traffic, however slow,
+/// keeps reusing its scratch memory and never pays for a reclaim.
+const IDLE_RECLAIM_DELAY: Duration = Duration::from_secs(5);
+
 /// Shared state for the HTTP application.
 pub struct AppState {
     pub config: AppConfig,
@@ -42,6 +48,9 @@ pub struct AppState {
     /// processing work actually finishes (libvips cannot be cancelled, so a
     /// timed-out derivation keeps occupying its slot until then).
     pub derivation_permits: Arc<Semaphore>,
+    /// Notified each time a derivation's blocking work ends; the wake-up
+    /// for [`reclaim_when_idle`].
+    derivation_ended: Arc<Notify>,
     pub process: ProcessFn,
 }
 
@@ -67,6 +76,7 @@ impl AppState {
             config,
             registry,
             derivation_permits: Arc::new(Semaphore::new(permits)),
+            derivation_ended: Arc::new(Notify::new()),
             process,
         })
     }
@@ -80,7 +90,8 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
     axum::Router::new().fallback(handle).with_state(state)
 }
 
-/// Bind `config.listen_address` and serve until shutdown (Ctrl-C).
+/// Bind `config.listen_address` and serve until SIGTERM or SIGINT, then let
+/// in-flight requests finish.
 ///
 /// libvips initialization and encoder verification happen in `main` before
 /// this is called. Prints one `{"event":"listening",...}` JSON line to
@@ -90,8 +101,16 @@ pub async fn run(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let registry = SourceRegistry::from_config(&config).await?;
     let listen_address = config.listen_address;
     let state = AppState::new(config, registry);
+    tokio::spawn(reclaim_when_idle(
+        state.clone(),
+        IDLE_RECLAIM_DELAY,
+        processor::release_free_memory,
+    ));
     let router = build_router(state);
 
+    // Handlers are installed before the socket is announced, so a signal
+    // can never arrive between "listening" and being able to act on it.
+    let shutdown = shutdown_signal()?;
     let listener = tokio::net::TcpListener::bind(listen_address).await?;
     let local_address = listener.local_addr()?;
     println!(
@@ -103,13 +122,59 @@ pub async fn run(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     );
 
     axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown)
         .await?;
     Ok(())
 }
 
-async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
+/// Resolves on the first SIGTERM or SIGINT.
+///
+/// SIGTERM is what `docker stop`, ECS, and Kubernetes send. The service runs
+/// as PID 1 in its container, where a signal without a handler is ignored
+/// rather than fatal: unhandled, a stop waits out the whole grace period
+/// and ends in SIGKILL, cutting off whatever was in flight.
+fn shutdown_signal() -> std::io::Result<impl std::future::Future<Output = ()>> {
+    let mut terminate = signal(SignalKind::terminate())?;
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    Ok(async move {
+        tokio::select! {
+            _ = terminate.recv() => {}
+            _ = interrupt.recv() => {}
+        }
+    })
+}
+
+/// Hand freed heap back to the operating system once derivations have gone
+/// quiet.
+///
+/// A derivation's decode and encode scratch is freed when it ends, but the
+/// allocator keeps it mapped for reuse (see
+/// [`processor::release_free_memory`]). Under traffic that reuse is the
+/// point. After a burst it is only resident memory nobody is using: measured
+/// at 296 MB against 48 MB before the burst. So `reclaim` runs once no
+/// derivation has ended for `quiet` and none is in flight, and never while
+/// work is under way.
+pub async fn reclaim_when_idle<F>(state: Arc<AppState>, quiet: Duration, reclaim: F)
+where
+    F: Fn() + Clone + Send + 'static,
+{
+    let idle_permits = state.config.max_concurrent_derivations;
+    loop {
+        state.derivation_ended.notified().await;
+        // Another derivation ending restarts the quiet period, and so does
+        // one still in flight when the period runs out.
+        loop {
+            let ended_again = tokio::time::timeout(quiet, state.derivation_ended.notified())
+                .await
+                .is_ok();
+            if !ended_again && state.derivation_permits.available_permits() == idle_permits {
+                break;
+            }
+        }
+        // The reclaim walks every allocator arena; keep it off the async
+        // workers. A panic in it must not end this loop.
+        let _ = tokio::task::spawn_blocking(reclaim.clone()).await;
+    }
 }
 
 /// Log fields gathered while answering one request. Only fields that were
@@ -311,9 +376,11 @@ async fn respond(
     let max_megapixels = state.config.max_source_megapixels;
     let source_bytes = fetched.bytes;
     let process = state.process.clone();
+    let derivation_ended = state.derivation_ended.clone();
     let join = tokio::task::spawn_blocking(move || {
         let result = process(&source_bytes, &transform, max_megapixels);
         drop(permit);
+        derivation_ended.notify_one();
         result
     });
     let processed = match tokio::time::timeout_at(deadline, join).await {

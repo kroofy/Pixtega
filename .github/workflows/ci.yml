@@ -8,9 +8,10 @@
 #   audit     - cargo audit against Cargo.lock (known advisories on
 #               production deps fail the job). Binary from
 #               taiki-e/install-action, same as cargo-machete.
-#   container - Docker build of the repository Dockerfile (buildx with GHA
-#               layer caching), then ./scripts/container-acceptance.sh with
-#               PIXTEGA_SKIP_BUILD=1 (run image + curl smoke test).
+#   container - Docker build of both Dockerfile targets, the service image
+#               and the Lambda image (buildx with GHA layer caching), then
+#               ./scripts/container-acceptance.sh with PIXTEGA_SKIP_BUILD=1
+#               (run each image, derive every format, stop it cleanly).
 #
 # Mutation testing is intentionally NOT here: a full cargo-mutants run takes
 # hours and lives in .github/workflows/mutants.yml (cron + manual dispatch).
@@ -18,7 +19,9 @@
 # ubuntu-26.04 is pinned (not ubuntu-latest) because its libvips 8.18
 # matches the pinned libvips Rust bindings (=2.3.0) and its libheif ships
 # the aom AV1 encoder plugin needed for AVIF output — the same reasoning as
-# the Dockerfile base image.
+# the Dockerfile base image. The check job tests against that distribution
+# libvips; the images ship their own 8.18 build, which the container job
+# exercises.
 
 name: CI
 
@@ -96,13 +99,14 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
-      # Build the exact image the script would build, but through buildx with
-      # GitHub Actions layer caching. The Dockerfile compiles dependencies in
-      # a layer keyed on Cargo.lock alone, so source-only changes reuse the
-      # cached dependency layer and skip the ~6-minute dependency compile.
-      # mode=max also caches the build-stage layers (the dependency layer
-      # lives there); the default mode would cache only the runtime stage.
-      - name: Build image with GHA layer cache
+      # Build the exact images the script would build, but through buildx
+      # with GitHub Actions layer caching. The Dockerfile builds libvips and
+      # compiles dependencies in layers keyed on the Dockerfile and
+      # Cargo.lock alone, so source-only changes reuse them and skip the
+      # ~6-minute dependency compile. mode=max also caches the build-stage
+      # layers (those layers live there); the default mode would cache only
+      # the runtime stage.
+      - name: Build service image with GHA layer cache
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -111,7 +115,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Acceptance script minus the build: run the image + curl smoke
-      # asserting a 200 image/webp WebP body.
+      # Same Dockerfile, `lambda` target: everything but the adapter layer
+      # is already in the builder's cache from the step above.
+      - name: Build Lambda image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: lambda
+          tags: pixtega-acceptance:lambda
+          load: true
+          cache-from: type=gha
+
+      # Acceptance script minus the builds: run each image, derive every
+      # output format from every source format, stop it cleanly.
       - name: container-acceptance.sh
         run: PIXTEGA_SKIP_BUILD=1 ./scripts/container-acceptance.sh
