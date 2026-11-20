@@ -52,11 +52,6 @@ impl AppConfig {
     pub fn format_policy(&self, format: OutputFormat) -> Option<&FormatPolicy> {
         self.formats.get(&format)
     }
-
-    /// The Source configuration selected by a Mount, if any.
-    pub fn source_for_mount(&self, mount: &str) -> Option<&SourceConfig> {
-        self.sources.iter().find(|s| s.mount() == mount)
-    }
 }
 
 /// Encoder policy for one output format. Quality scales are not comparable

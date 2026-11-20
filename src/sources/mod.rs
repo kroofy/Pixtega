@@ -8,7 +8,6 @@ pub mod filesystem;
 pub mod http;
 pub mod s3;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -48,9 +47,11 @@ pub trait Source: Send + Sync {
     async fn identify(&self, key: &UpstreamKey) -> Result<Option<IdentifiedObject>, SourceError>;
 }
 
-/// Maps Mounts to constructed Source adapters.
+/// The constructed adapter of every configured Source, in configuration
+/// order: a request names its Source by position
+/// ([`ResolvedRequest::source`](crate::types::ResolvedRequest::source)).
 pub struct SourceRegistry {
-    sources: HashMap<String, Arc<dyn Source>>,
+    sources: Vec<Arc<dyn Source>>,
 }
 
 impl SourceRegistry {
@@ -62,21 +63,22 @@ impl SourceRegistry {
             timeout: Duration::from_millis(config.download_timeout_ms),
             max_redirects: config.max_redirects,
         };
-        let mut sources: HashMap<String, Arc<dyn Source>> = HashMap::new();
+        let mut sources: Vec<Arc<dyn Source>> = Vec::with_capacity(config.sources.len());
         for source in &config.sources {
-            let adapter: Arc<dyn Source> = match source {
+            sources.push(match source {
                 SourceConfig::Http(c) => Arc::new(http::HttpSource::new(c, limits)?),
                 SourceConfig::Filesystem(c) => {
                     Arc::new(filesystem::FilesystemSource::new(c, limits)?)
                 }
                 SourceConfig::S3(c) => Arc::new(s3::S3Source::new(c, limits).await?),
-            };
-            sources.insert(source.mount().to_string(), adapter);
+            });
         }
         Ok(SourceRegistry { sources })
     }
 
-    pub fn get(&self, mount: &str) -> Option<Arc<dyn Source>> {
-        self.sources.get(mount).cloned()
+    /// The adapter of the Source at `index` in the configuration this
+    /// registry was built from.
+    pub fn source(&self, index: usize) -> &dyn Source {
+        self.sources[index].as_ref()
     }
 }

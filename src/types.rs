@@ -95,8 +95,9 @@ impl UpstreamKey {
 /// I/O happens. The rest of the application never re-parses URL strings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedRequest {
-    /// The Mount that selected the Source.
-    pub mount: String,
+    /// The Source the Mount selected, as its position in the configured
+    /// sources. The Source registry holds the adapters in that same order.
+    pub source: usize,
     /// Key Prefix + validated source path, ready for the Source adapter.
     pub upstream_key: UpstreamKey,
     /// The resolved Transform.

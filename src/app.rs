@@ -14,7 +14,7 @@ use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::{Notify, Semaphore};
 
 use crate::config::AppConfig;
-use crate::errors::{Outcome, ProcessError, RequestError, SourceError};
+use crate::errors::{ConfigError, Outcome, ProcessError, RequestError, SourceError};
 use crate::etag::derived_etag;
 use crate::logging::{CompletionEvent, SourceErrorEvent};
 use crate::processor;
@@ -41,7 +41,8 @@ const IDLE_RECLAIM_DELAY: Duration = Duration::from_secs(5);
 /// Shared state for the HTTP application.
 pub struct AppState {
     pub config: AppConfig,
-    pub registry: SourceRegistry,
+    /// One adapter per entry of `config.sources`, in the same order.
+    registry: SourceRegistry,
     /// Process-wide derivation permits: no more than
     /// `max_concurrent_derivations` Source Objects are fetched or processed
     /// at once. Acquired before fetching; released only when the blocking
@@ -55,30 +56,31 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: AppConfig, registry: SourceRegistry) -> Arc<Self> {
+    /// Build the state for `config`, constructing its Source adapters.
+    pub async fn new(config: AppConfig) -> Result<Arc<Self>, ConfigError> {
         Self::with_processor(
             config,
-            registry,
             Arc::new(|bytes, transform, max_megapixels| {
                 processor::process_image(bytes, transform, max_megapixels)
             }),
         )
+        .await
     }
 
     /// [`AppState::new`] with an explicit processing function (test seam).
-    pub fn with_processor(
+    pub async fn with_processor(
         config: AppConfig,
-        registry: SourceRegistry,
         process: ProcessFn,
-    ) -> Arc<Self> {
+    ) -> Result<Arc<Self>, ConfigError> {
+        let registry = SourceRegistry::from_config(&config).await?;
         let permits = config.max_concurrent_derivations;
-        Arc::new(AppState {
+        Ok(Arc::new(AppState {
             config,
             registry,
             derivation_permits: Arc::new(Semaphore::new(permits)),
             derivation_ended: Arc::new(Notify::new()),
             process,
-        })
+        }))
     }
 }
 
@@ -98,9 +100,8 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
 /// standard output once the socket is bound, so a supervisor or test can
 /// wait for readiness.
 pub async fn run(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let registry = SourceRegistry::from_config(&config).await?;
     let listen_address = config.listen_address;
-    let state = AppState::new(config, registry);
+    let state = AppState::new(config).await?;
     tokio::spawn(reclaim_when_idle(
         state.clone(),
         IDLE_RECLAIM_DELAY,
@@ -275,18 +276,11 @@ async fn respond(
         }
     };
 
+    let source = state.registry.source(resolved.source);
     let mut report = Report::new(Outcome::Success);
-    report.mount = Some(resolved.mount.clone());
+    report.mount = Some(state.config.sources[resolved.source].mount().to_string());
     report.width = Some(resolved.transform.width);
     report.format = Some(resolved.transform.format);
-
-    // parse_request only accepts configured Mounts and the registry is built
-    // from the same configuration, so a missing adapter is unreachable.
-    let Some(source) = state.registry.get(&resolved.mount) else {
-        report.outcome = Outcome::SourceUnavailable;
-        let response = error_response(state, StatusCode::INTERNAL_SERVER_ERROR, "internal error");
-        return (response, report);
-    };
 
     // Identify before the permit so a matching revalidation can 304
     // while encodes occupy every slot. Non-timeout identify errors
