@@ -4,6 +4,7 @@
 website/.wrangler/
 website/node_modules/
 /bench/
+__pycache__/
 
 # Personal local configs (config.local.toml stays tracked: fixtures-only quickstart)
 config.private.toml

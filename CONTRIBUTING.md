@@ -43,10 +43,15 @@ S3-compatible and TLS fixtures) and need no credentials or public network
 access. `./scripts/container-acceptance.sh` additionally exercises both
 Docker images end to end.
 
-For performance work, `scripts/bench/bench.py` measures startup, latency,
-throughput, and memory per scenario for a binary (after
-`scripts/bench/gen-fixtures.sh`), and `scripts/bench/coldstart.sh` measures
-a container image starting on a cold page cache.
+For performance work, `scripts/bench/bench.sh LABEL [IMAGE]` measures what
+a container image spends in time, CPU, and memory to derive every output
+format, at several widths, from about forty source images that differ in
+content, format, size, and encoding, and then under concurrent load. The
+corpus is generated in a container from photographs pinned by checksum, so
+every run measures the same sources. `scripts/bench/bench.py report A.json
+B.json` compares two runs, which is how to see what a change did: benchmark
+an image from before it and one from after it. `scripts/bench/coldstart.sh`
+measures an image starting on a cold page cache.
 
 For behavior changes, consider mutation testing (`cargo install
 cargo-mutants && cargo mutants`); configuration and exclusions live in

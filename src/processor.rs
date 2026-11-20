@@ -32,7 +32,8 @@
 //! 5. For JPEG output only, flatten transparency onto white
 //!    ([`ProcessError::Flatten`] on failure). WebP and AVIF preserve alpha.
 //! 6. Encode with the resolved quality, stripping all source metadata
-//!    (`keep=None`). AVIF is heifsave with AV1 compression at 8-bit depth.
+//!    (`keep=None`). AVIF is heifsave with AV1 compression at 8-bit depth
+//!    and effort 3 (`AVIF_EFFORT`).
 //!
 //! Error classification: everything up to and including the materialized
 //! decode is attributed to the source bytes ([`ProcessError::Undecodable`],
@@ -257,6 +258,17 @@ pub fn process_image(
     })
 }
 
+/// AV1 encoder effort, on libvips' scale of 0 (fastest) to 9; libvips
+/// defaults to 4. AVIF is the most expensive output and effort is most of
+/// its cost: a 1920 px wide photograph takes about 0.3 s to encode at 3 and
+/// 1.2 s at 4. The file is the same size within a few percent and PSNR is
+/// 0.1 to 0.4 dB lower. Effort 2 is a third faster again but loses another
+/// 0.5 dB. The one cost in memory is transparency: encoding an image with
+/// an alpha channel peaks 40 to 80 MB higher at 3.
+/// `scripts/bench/bench.sh` on an image built with each setting shows the
+/// difference in time, memory, and size.
+const AVIF_EFFORT: i32 = 3;
+
 /// Encode `image` as `format` at `quality`, stripping all source metadata.
 fn encode(
     image: &VipsImage,
@@ -285,6 +297,7 @@ fn encode(
             &HeifsaveBufferOptions {
                 q: quality,
                 bitdepth: 8,
+                effort: AVIF_EFFORT,
                 compression: ForeignHeifCompression::Av1,
                 keep: ForeignKeep::None,
                 ..HeifsaveBufferOptions::default()
