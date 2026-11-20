@@ -4,7 +4,10 @@
 #   check     - exactly ./scripts/check.sh (fmt --check, clippy -D warnings
 #               which also denies rustc dead_code/unused lints, cargo-machete
 #               unused-dependency scan, unit + integration tests) on the
-#               toolchain pinned by rust-toolchain.toml.
+#               toolchain pinned by rust-toolchain.toml. Runs twice: against
+#               the libvips the images ship (scripts/build-libvips.sh, the
+#               same recipe the Dockerfile runs) and against Ubuntu's own,
+#               which local builds and the release tarball link.
 #   audit     - cargo audit against Cargo.lock (known advisories on
 #               production deps fail the job). Binary from
 #               taiki-e/install-action, same as cargo-machete.
@@ -19,9 +22,7 @@
 # ubuntu-26.04 is pinned (not ubuntu-latest) because its libvips 8.18
 # matches the pinned libvips Rust bindings (=2.3.0) and its libheif ships
 # the aom AV1 encoder plugin needed for AVIF output — the same reasoning as
-# the Dockerfile base image. The check job tests against that distribution
-# libvips; the images ship their own 8.18 build, which the container job
-# exercises.
+# the Dockerfile base image.
 
 name: CI
 
@@ -39,13 +40,26 @@ concurrency:
 
 jobs:
   check:
-    name: fmt + clippy + tests
+    name: fmt + clippy + tests (${{ matrix.libvips }} libvips)
     runs-on: ubuntu-26.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        libvips: [image, ubuntu]
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install libvips and AVIF encoder plugins
+      # The libvips the container images ship, from the recipe the
+      # Dockerfile runs. LIBRARY_PATH lets the linker find it in /usr/local.
+      - name: Build the images' libvips
+        if: matrix.libvips == 'image'
+        run: |
+          sudo ./scripts/build-libvips.sh
+          echo "LIBRARY_PATH=/usr/local/lib" >> "$GITHUB_ENV"
+
+      - name: Install Ubuntu's libvips and AVIF encoder plugins
+        if: matrix.libvips == 'ubuntu'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -62,6 +76,8 @@ jobs:
 
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.libvips }}
 
       # Prebuilt binary so check.sh's `cargo machete` step (unused-dependency
       # gate) runs in CI exactly as it does locally.
@@ -72,6 +88,12 @@ jobs:
 
       - name: check.sh (fmt, clippy, machete, tests)
         run: ./scripts/check.sh
+
+      # The leg is only worth its name if the binary under test loads the
+      # build it claims to.
+      - name: Confirm the tests ran against the images' libvips
+        if: matrix.libvips == 'image'
+        run: ldd target/debug/pixtega | grep -F '/usr/local/lib/libvips.so.42'
 
   audit:
     name: cargo audit
@@ -101,8 +123,8 @@ jobs:
 
       # Build the exact images the script would build, but through buildx
       # with GitHub Actions layer caching. The Dockerfile builds libvips and
-      # compiles dependencies in layers keyed on the Dockerfile and
-      # Cargo.lock alone, so source-only changes reuse them and skip the
+      # compiles dependencies in layers keyed on scripts/build-libvips.sh
+      # and Cargo.lock alone, so source-only changes reuse them and skip the
       # ~6-minute dependency compile. mode=max also caches the build-stage
       # layers (those layers live there); the default mode would cache only
       # the runtime stage.

@@ -347,9 +347,9 @@ Full details in [docs/ci.md](docs/ci.md).
 - **CI** runs `./scripts/check.sh`, `cargo-audit` on `Cargo.lock`, and
   `./scripts/container-acceptance.sh` on every PR and push to `main`.
   Dependabot covers cargo, Actions, `js/` npm, and Dockerfile `FROM`
-  tags; the libvips source pin in the Dockerfile, native Ubuntu codec
-  packages, and Lambda adapter releases are a manual bump/rebuild/watch
-  — see [docs/ci.md](docs/ci.md).
+  tags; the libvips source pin in `scripts/build-libvips.sh`, native
+  Ubuntu codec packages, and Lambda adapter releases are a manual
+  bump/rebuild/watch — see [docs/ci.md](docs/ci.md).
 - **Mutation score**: the project threshold is ≥ 90%. The Mutants workflow
   (weekly on `main` + manual dispatch) runs the full `cargo mutants`
   suite, publishes the score in the run's job summary and a

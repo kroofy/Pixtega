@@ -33,8 +33,9 @@ updates:
 
   # The Dockerfile's FROM lines: ubuntu and the Lambda Web Adapter image
   # (a named stage there so it is a FROM). Grouped so tag/digest churn lands
-  # in one PR. The libvips source pin in the same file (VIPS_VERSION) is
-  # not something Dependabot can see; docs/ci.md says how it is bumped.
+  # in one PR. The libvips source pin (VIPS_VERSION in
+  # scripts/build-libvips.sh) is not something Dependabot can see;
+  # docs/ci.md says how it is bumped.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:

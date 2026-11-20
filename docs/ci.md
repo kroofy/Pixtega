@@ -14,7 +14,12 @@ Runs on every pull request and every push to `main`. Three jobs:
   `cargo clippy -D warnings`, `cargo test` (unit + integration), on the
   toolchain pinned by [rust-toolchain.toml](../rust-toolchain.toml)
   (rustup installs the pin; CI cannot drift from it). Cargo registry and
-  build artifacts are cached with `Swatinem/rust-cache`.
+  build artifacts are cached with `Swatinem/rust-cache`. It runs as two
+  legs. `image libvips` builds libvips with
+  [scripts/build-libvips.sh](../scripts/build-libvips.sh), the recipe the
+  Dockerfile runs, so the whole suite is tested against what the images
+  ship. `ubuntu libvips` installs Ubuntu's `libvips-dev`, which is what a
+  local build and the release tarball link.
 - **audit** — `cargo-audit` against `Cargo.lock`. Known RustSec
   advisories for production dependencies fail the job. Installed with
   `taiki-e/install-action` (same as `cargo-machete`); no compile, so no
@@ -26,11 +31,8 @@ Runs on every pull request and every push to `main`. Three jobs:
   `./scripts/container-acceptance.sh` with `PIXTEGA_SKIP_BUILD=1`. For
   each image the script starts it, derives WebP, AVIF, and JPEG from
   each of a JPEG, a PNG, a WebP, and an AVIF source, and asserts
-  `docker stop` ends the service with exit status 0. The
-  images carry their own libvips build rather than the one the `check`
-  job tests against, so this is the job that proves that build decodes
-  and encodes everything the service promises. The Dockerfile builds
-  libvips and compiles dependencies in layers of their own, so
+  `docker stop` ends the service with exit status 0. The Dockerfile
+  builds libvips and compiles dependencies in layers of their own, so
   source-only changes reuse them; a `Cargo.lock` change pays one full
   recompile, then re-caches. Run locally without any env vars — the
   script then builds the images itself.
@@ -57,12 +59,13 @@ PRs for:
 Dependabot does not see three things, and each needs a human watch:
 
 - **libvips.** The images build it from the upstream release tarball
-  pinned by `VIPS_VERSION` and `VIPS_SHA256` in the Dockerfile. To bump
-  it, take a newer patch release of the same minor from
-  <https://github.com/libvips/libvips/releases>, set both arguments (the
+  pinned by `VIPS_VERSION` and `VIPS_SHA256` in
+  [scripts/build-libvips.sh](../scripts/build-libvips.sh). To bump it,
+  take a newer patch release of the same minor from
+  <https://github.com/libvips/libvips/releases>, set both variables (the
   release publishes the tarball's SHA-256 next to it), and let the
-  `container` job prove the build. The minor version must stay the one
-  the pinned `libvips` Rust bindings were generated from.
+  `check` and `container` jobs prove the build. The minor version must
+  stay the one the pinned `libvips` Rust bindings were generated from.
 - **Ubuntu codec packages.** apt security updates for **libheif**, the
   **aom** plugins, **libjpeg-turbo**, **libpng**, **libwebp**, and the
   other libraries libvips links land only when the image is rebuilt
