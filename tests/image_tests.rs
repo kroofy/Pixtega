@@ -2,8 +2,10 @@
 //!
 //! Every test drives the processor functions directly (no HTTP). All
 //! fixtures are generated in memory during the test run. Lossy output is
-//! never compared byte-for-byte: assertions cover container signatures,
+//! never compared with stored bytes: assertions cover container signatures,
 //! dimensions, alpha behavior, and pixel values with documented tolerances.
+//! The one byte-for-byte comparison is against an encode libvips makes in
+//! the same test run, to pin an encoder setting the output does not show.
 //!
 //! Documented tolerances:
 //! - Flattened-to-white JPEG pixels: every RGB channel >= 240.
@@ -361,6 +363,51 @@ fn quality_parameter_reaches_the_encoder() {
         "noisy content at q92 ({} bytes) must be larger than at q70 ({} bytes)",
         high.len(),
         low.len()
+    );
+}
+
+/// AVIF is encoded at effort 3, not libvips' default of 4, which takes
+/// about four times as long for a file of the same size. Nothing about the
+/// output says which effort made it, so this compares bytes with libvips'
+/// own encodes at both efforts. The source is already the requested width
+/// and untagged sRGB, so the processor encodes the very pixels it holds.
+#[test]
+fn avif_is_encoded_at_effort_3() {
+    use libvips::ops::{
+        heifsave_buffer_with_opts, ForeignHeifCompression, ForeignKeep, HeifsaveBufferOptions,
+    };
+
+    init_vips();
+    let mut source = Cursor::new(Vec::new());
+    DynamicImage::ImageRgb8(noise_rgb(256, 256))
+        .write_to(&mut source, image::ImageFormat::Png)
+        .expect("fixture PNG encode");
+    let source = source.into_inner();
+    let pixels = VipsImage::new_from_buffer(&source, "").expect("fixture PNG must load");
+    let at_effort = |effort| {
+        heifsave_buffer_with_opts(
+            &pixels,
+            &HeifsaveBufferOptions {
+                q: 55,
+                bitdepth: 8,
+                effort,
+                compression: ForeignHeifCompression::Av1,
+                keep: ForeignKeep::None,
+                ..HeifsaveBufferOptions::default()
+            },
+        )
+        .expect("reference AVIF encode")
+    };
+    assert_ne!(
+        at_effort(3),
+        at_effort(4),
+        "the fixture must encode differently at efforts 3 and 4"
+    );
+
+    let out = process_image(&source, &tf(256, OutputFormat::Avif, 55), MP).unwrap();
+    assert!(
+        out == at_effort(3),
+        "AVIF output must be what libvips encodes at effort 3"
     );
 }
 
