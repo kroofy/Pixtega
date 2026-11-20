@@ -49,16 +49,13 @@ impl Source for FilesystemSource {
         let root = self.root.clone();
         let segments = key.segments.clone();
         let limits = self.limits;
-        match tokio::time::timeout(
-            self.limits.timeout,
-            tokio::task::spawn_blocking(move || identify_blocking(&root, &segments, &limits)),
-        )
-        .await
-        {
-            Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err(unavailable("filesystem worker task failed")),
-            Err(_) => Err(SourceError::Timeout),
-        }
+        self.limits
+            .within(async move {
+                tokio::task::spawn_blocking(move || identify_blocking(&root, &segments, &limits))
+                    .await
+                    .map_err(|_| unavailable("filesystem worker task failed"))?
+            })
+            .await
     }
 }
 

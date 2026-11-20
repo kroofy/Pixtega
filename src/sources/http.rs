@@ -40,12 +40,14 @@ pub struct HttpSource {
 
 impl HttpSource {
     pub fn new(config: &HttpSourceConfig, limits: FetchLimits) -> Result<Self, ConfigError> {
+        // No request timeout on the client: `FetchLimits::within` bounds
+        // the whole exchange (all hops + body), and dropping it cancels the
+        // request. The connect timeout is not a second deadline but how
+        // the connector moves on: it is split across a host's addresses, so
+        // one that never answers cannot use up the budget of the rest.
         let mut builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .tls_backend_rustls()
-            // Belt: per-request timeout; the adapter additionally wraps the
-            // whole exchange (all hops + body) in one tokio timeout.
-            .timeout(limits.timeout)
             .connect_timeout(limits.timeout);
 
         if let Some(ca_path) = &config.ca_certificate_file {
@@ -253,20 +255,12 @@ impl HttpSource {
 impl Source for HttpSource {
     async fn fetch(&self, key: &UpstreamKey) -> Result<FetchedObject, SourceError> {
         let url = self.url_for(key)?;
-        // One timeout for the whole exchange: every redirect hop and the
-        // complete body stream.
-        match tokio::time::timeout(self.limits.timeout, self.fetch_inner(url)).await {
-            Ok(result) => result,
-            Err(_) => Err(SourceError::Timeout),
-        }
+        self.limits.within(self.fetch_inner(url)).await
     }
 
     async fn identify(&self, key: &UpstreamKey) -> Result<Option<IdentifiedObject>, SourceError> {
         let url = self.url_for(key)?;
-        match tokio::time::timeout(self.limits.timeout, self.identify_inner(url)).await {
-            Ok(result) => result,
-            Err(_) => Err(SourceError::Timeout),
-        }
+        self.limits.within(self.identify_inner(url)).await
     }
 }
 

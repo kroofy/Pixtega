@@ -62,8 +62,10 @@ impl S3Source {
         }
         let shared_config = loader.load().await;
 
+        // No operation timeout: `FetchLimits::within` bounds the whole
+        // exchange, retries and body included. The attempt timeout stays
+        // because the SDK also sizes its credential-load deadline from it.
         let timeout_config = aws_sdk_s3::config::timeout::TimeoutConfig::builder()
-            .operation_timeout(limits.timeout)
             .operation_attempt_timeout(limits.timeout)
             .build();
         let s3_config = aws_sdk_s3::config::Builder::from(&shared_config)
@@ -71,8 +73,6 @@ impl S3Source {
             .timeout_config(timeout_config)
             // Standard retry machinery (attempts, backoff) with a
             // transport-only classifier. Service errors stay one-shot.
-            // `operation_timeout` already includes retries; `Source::fetch`
-            // wraps the same budget again.
             .retry_config(RetryConfig::standard())
             .retry_classifier(TransportRetryClassifier)
             .build();
@@ -153,19 +153,11 @@ impl S3Source {
 #[async_trait]
 impl Source for S3Source {
     async fn fetch(&self, key: &UpstreamKey) -> Result<FetchedObject, SourceError> {
-        // One timeout for the whole exchange, including body streaming,
-        // in addition to the SDK operation timeout configured above.
-        match tokio::time::timeout(self.limits.timeout, self.fetch_inner(key)).await {
-            Ok(result) => result,
-            Err(_) => Err(SourceError::Timeout),
-        }
+        self.limits.within(self.fetch_inner(key)).await
     }
 
     async fn identify(&self, key: &UpstreamKey) -> Result<Option<IdentifiedObject>, SourceError> {
-        match tokio::time::timeout(self.limits.timeout, self.identify_inner(key)).await {
-            Ok(result) => result,
-            Err(_) => Err(SourceError::Timeout),
-        }
+        self.limits.within(self.identify_inner(key)).await
     }
 }
 

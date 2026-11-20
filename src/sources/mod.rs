@@ -8,6 +8,7 @@ pub mod filesystem;
 pub mod http;
 pub mod s3;
 
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,7 +25,8 @@ pub struct FetchLimits {
     /// length when one exists ([`FetchLimits::admit`]) AND again while
     /// streaming the body ([`BoundedBody`]).
     pub max_bytes: u64,
-    /// One timeout applied to the whole exchange, including body streaming.
+    /// One timeout applied to the whole exchange, including body streaming
+    /// ([`FetchLimits::within`]).
     pub timeout: Duration,
     /// Maximum number of redirects an HTTP(S) fetch may follow.
     pub max_redirects: u32,
@@ -39,6 +41,19 @@ impl FetchLimits {
             return Err(SourceError::TooLarge { upstream_status });
         }
         Ok(())
+    }
+
+    /// Run one whole exchange with a Source — every hop, every retry, and
+    /// the complete body — under the download timeout. This is the only
+    /// deadline on an exchange: the clients beneath the adapters are given
+    /// no request or operation timeout of their own.
+    pub async fn within<T>(
+        &self,
+        exchange: impl Future<Output = Result<T, SourceError>>,
+    ) -> Result<T, SourceError> {
+        tokio::time::timeout(self.timeout, exchange)
+            .await
+            .unwrap_or(Err(SourceError::Timeout))
     }
 
     /// Start reading a Source Object body under the byte limit.
