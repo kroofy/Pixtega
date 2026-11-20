@@ -3,10 +3,17 @@
 
 Measures, per scenario (one fresh server process per scenario so peak RSS is
 attributable):
+  - startup time (spawn to the "listening" line) and the first request's
+    latency, against the warm latency below
   - sequential request latency (mean / p50 / min over N requests)
   - throughput at fixed concurrency (requests per second)
-  - server peak RSS (VmHWM) and final RSS after the scenario
+  - server RSS: idle before any request, peak (VmHWM), right after the
+    load, and settled once the service has been idle long enough to hand
+    freed memory back
   - response body size (sanity check that behavior did not change)
+
+The server here starts with a warm page cache; scripts/bench/coldstart.sh
+measures a container starting with a cold one.
 
 Usage:
   scripts/bench/bench.py run --binary target/release/pixtega --label baseline
@@ -46,6 +53,10 @@ SCENARIOS = [
 ]
 
 CONCURRENCY = 4
+
+# Longer than the service's idle reclaim delay (IDLE_RECLAIM_DELAY in
+# src/app.rs), so the settled RSS is read after the reclaim has run.
+SETTLE_SECONDS = 7
 
 
 def fetch(path):
@@ -95,11 +106,12 @@ def start_server(binary):
         binary: Path to the pixtega executable.
 
     Returns:
-        The running Popen process.
+        Tuple of (running Popen process, seconds from spawn to listening).
 
     Raises:
         RuntimeError: If the server exits or does not report listening within 15s.
     """
+    spawned = time.perf_counter()
     proc = subprocess.Popen(
         [binary, CONFIG],
         stdout=subprocess.PIPE,
@@ -116,9 +128,10 @@ def start_server(binary):
             break
     else:
         raise RuntimeError("server did not report listening")
+    startup = time.perf_counter() - spawned
     # Drain stdout in the background so the pipe never fills up.
     threading.Thread(target=proc.stdout.read, daemon=True).start()
-    return proc
+    return proc, startup
 
 
 def run_scenario(binary, name, path, seq_n, conc_n):
@@ -132,14 +145,17 @@ def run_scenario(binary, name, path, seq_n, conc_n):
         conc_n: Number of concurrent requests for throughput measurement.
 
     Returns:
-        Dict with scenario name, latency stats, throughput, memory usage, and body size.
+        Dict with scenario name, startup and latency stats, throughput, memory
+        usage, and body size.
 
     Raises:
         RuntimeError: If concurrent requests fail.
     """
-    proc = start_server(binary)
+    proc, startup = start_server(binary)
     try:
-        for _ in range(3):  # warmup
+        idle_rss = read_proc_status(proc.pid).get("VmRSS")
+        first_request, _ = fetch(path)
+        for _ in range(2):  # the rest of the warmup
             fetch(path)
 
         latencies = []
@@ -177,9 +193,13 @@ def run_scenario(binary, name, path, seq_n, conc_n):
             raise RuntimeError(f"{name}: concurrent errors: {errors[:3]}")
 
         mem = read_proc_status(proc.pid)
+        time.sleep(SETTLE_SECONDS)
+        settled_rss = read_proc_status(proc.pid).get("VmRSS")
         return {
             "name": name,
             "path": path,
+            "startup_ms": startup * 1000,
+            "first_request_ms": first_request * 1000,
             "seq_n": seq_n,
             "latency_mean_ms": statistics.mean(latencies) * 1000,
             "latency_p50_ms": statistics.median(latencies) * 1000,
@@ -188,8 +208,10 @@ def run_scenario(binary, name, path, seq_n, conc_n):
             "concurrency": CONCURRENCY,
             "throughput_rps": conc_n / wall,
             "body_bytes": body_len,
+            "idle_rss_kb": idle_rss,
             "peak_rss_kb": mem.get("VmHWM"),
             "final_rss_kb": mem.get("VmRSS"),
+            "settled_rss_kb": settled_rss,
         }
     finally:
         proc.send_signal(signal.SIGKILL)
@@ -231,14 +253,19 @@ def print_table(results):
     Args:
         results: List of scenario result dicts.
     """
-    header = f"{'scenario':32} {'mean ms':>9} {'p50 ms':>9} {'min ms':>9} {'rps@4':>7} {'peakRSS MB':>10} {'body B':>9}"
+    header = (
+        f"{'scenario':32} {'start ms':>8} {'first ms':>8} {'p50 ms':>8} {'min ms':>8} "
+        f"{'rps@4':>7} {'idle MB':>7} {'peak MB':>7} {'settled MB':>10} {'body B':>9}"
+    )
     print(header)
     print("-" * len(header))
     for r in results:
         print(
-            f"{r['name']:32} {r['latency_mean_ms']:9.1f} {r['latency_p50_ms']:9.1f} "
-            f"{r['latency_min_ms']:9.1f} {r['throughput_rps']:7.2f} "
-            f"{(r['peak_rss_kb'] or 0) / 1024:10.1f} {r['body_bytes']:9d}"
+            f"{r['name']:32} {r['startup_ms']:8.1f} {r['first_request_ms']:8.1f} "
+            f"{r['latency_p50_ms']:8.1f} {r['latency_min_ms']:8.1f} "
+            f"{r['throughput_rps']:7.2f} {(r['idle_rss_kb'] or 0) / 1024:7.1f} "
+            f"{(r['peak_rss_kb'] or 0) / 1024:7.1f} "
+            f"{(r['settled_rss_kb'] or 0) / 1024:10.1f} {r['body_bytes']:9d}"
         )
 
 
@@ -255,7 +282,7 @@ def cmd_compare(args):
     la, lb = os.path.basename(args.a), os.path.basename(args.b)
     header = (
         f"{'scenario':32} {'p50 A':>9} {'p50 B':>9} {'Δp50':>7} "
-        f"{'rps A':>7} {'rps B':>7} {'ΔRSS MB':>8} {'ΔbodyB':>8}"
+        f"{'rps A':>7} {'rps B':>7} {'Δpeak MB':>8} {'Δsettled MB':>11} {'ΔbodyB':>8}"
     )
     print(f"A={la}  B={lb}")
     print(header)
@@ -266,10 +293,12 @@ def cmd_compare(args):
         ra, rb = a[name], b[name]
         dp = (rb["latency_p50_ms"] - ra["latency_p50_ms"]) / ra["latency_p50_ms"] * 100
         drss = ((rb["peak_rss_kb"] or 0) - (ra["peak_rss_kb"] or 0)) / 1024
+        dsettled = ((rb["settled_rss_kb"] or 0) - (ra["settled_rss_kb"] or 0)) / 1024
         dbody = rb["body_bytes"] - ra["body_bytes"]
         print(
             f"{name:32} {ra['latency_p50_ms']:9.1f} {rb['latency_p50_ms']:9.1f} {dp:+6.1f}% "
-            f"{ra['throughput_rps']:7.2f} {rb['throughput_rps']:7.2f} {drss:+8.1f} {dbody:+8d}"
+            f"{ra['throughput_rps']:7.2f} {rb['throughput_rps']:7.2f} {drss:+8.1f} "
+            f"{dsettled:+11.1f} {dbody:+8d}"
         )
 
 
