@@ -56,7 +56,7 @@ COPY src ./src
 RUN touch src/lib.rs src/main.rs && cargo build --release --locked
 
 # A named stage so Dependabot's docker ecosystem sees the adapter pin.
-FROM public.ecr.aws/awsguru/aws-lambda-adapter:1.0.1 AS lambda-adapter
+FROM public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 AS lambda-adapter
 
 # Everything both images share. The package list is the runtime half of the
 # -dev packages scripts/build-libvips.sh builds libvips against.
