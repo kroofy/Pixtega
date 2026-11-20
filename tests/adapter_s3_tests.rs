@@ -496,6 +496,29 @@ async fn body_exactly_at_the_limit_is_fetched() {
     assert_eq!(fetched.bytes.len(), 1024);
 }
 
+/// The advertised length sizes the buffer once. An object that arrives in
+/// many chunks is not grown and re-copied on the way in, which for a large
+/// object would transiently hold it twice and leave the buffer oversized
+/// for the whole derivation.
+#[tokio::test]
+async fn advertised_length_sizes_the_buffer_for_the_whole_object() {
+    let body = vec![b'z'; 3 * 1024 * 1024 + 123];
+    let fake = FakeS3::start(HashMap::from([(
+        format!("/{BUCKET}/large.jpg"),
+        Script::Bytes(object_response(&body)),
+    )]))
+    .await;
+
+    let source = adapter(&fake, limits(8 * 1024 * 1024, Duration::from_secs(10))).await;
+    let fetched = source.fetch(&key(&["large.jpg"])).await.unwrap();
+    assert_eq!(fetched.bytes.len(), body.len());
+    assert_eq!(
+        fetched.bytes.capacity(),
+        body.len(),
+        "the buffer must be allocated once, at the advertised length"
+    );
+}
+
 /// A zero-length object is a valid object: an advertised Content-Length of
 /// 0 is within any limit and must not be misread as too large (it is left
 /// to the processor to reject empty bytes as undecodable).
