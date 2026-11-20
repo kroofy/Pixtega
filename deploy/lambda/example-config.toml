@@ -1,5 +1,5 @@
 # Example configuration for running on AWS Lambda behind the Lambda Web
-# Adapter (see Dockerfile.lambda and deploy/lambda/README.md).
+# Adapter (see the Dockerfile's `lambda` target and deploy/lambda/README.md).
 #
 # Pass this whole document inline through the function's CONFIG environment
 # variable, or bake it into the image and point CONFIG_FILE at it.

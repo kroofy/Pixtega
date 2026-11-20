@@ -20,15 +20,20 @@ Runs on every pull request and every push to `main`. Three jobs:
   `taiki-e/install-action` (same as `cargo-machete`); no compile, so no
   libvips. Intentional ignores, if any, live in a checked-in
   `.cargo/audit.toml` with a reason — there is none today.
-- **container** — builds the repository Dockerfile via buildx with
-  GitHub Actions layer caching (`cache-from/cache-to: type=gha,mode=max`),
-  then runs `./scripts/container-acceptance.sh` with `PIXTEGA_SKIP_BUILD=1`
-  to start the image and assert a 200 `image/webp` WebP body from the
-  fixtures success case. The Dockerfile compiles dependencies in a layer
-  keyed on `Cargo.lock` alone, so source-only changes reuse the cached
-  dependency layer; a `Cargo.lock` change pays one full recompile, then
-  re-caches. Run locally without any env vars — the script then builds
-  the image itself.
+- **container** — builds both targets of the repository Dockerfile (the
+  service image and the `lambda` image) via buildx with GitHub Actions
+  layer caching (`cache-from/cache-to: type=gha,mode=max`), then runs
+  `./scripts/container-acceptance.sh` with `PIXTEGA_SKIP_BUILD=1`. For
+  each image the script starts it, derives WebP, AVIF, and JPEG from
+  each of a JPEG, a PNG, a WebP, and an AVIF source, and asserts
+  `docker stop` ends the service with exit status 0. The
+  images carry their own libvips build rather than the one the `check`
+  job tests against, so this is the job that proves that build decodes
+  and encodes everything the service promises. The Dockerfile builds
+  libvips and compiles dependencies in layers of their own, so
+  source-only changes reuse them; a `Cargo.lock` change pays one full
+  recompile, then re-caches. Run locally without any env vars — the
+  script then builds the images itself.
 
 All three jobs run on `ubuntu-26.04` pinned (not `ubuntu-latest`): resolute's
 libvips 8.18 matches the pinned `libvips = "=2.3.0"` bindings and its
@@ -45,19 +50,27 @@ PRs for:
 - **npm** (weekly, minor/patch grouped) — the `js/` workspace lockfile
   (`typescript` today). `website/` has no `package.json`; wrangler is
   invoked as `npx wrangler@4` and is not a Dependabot target.
-- **docker** (weekly, one grouped PR) — `FROM` tags in [Dockerfile](../Dockerfile)
-  and [Dockerfile.lambda](../Dockerfile.lambda) (`ubuntu:26.04` and the
-  AWS Lambda Web Adapter image). Grouped so tag/digest churn is one PR,
-  not one per file.
+- **docker** (weekly, one grouped PR) — `FROM` tags in the
+  [Dockerfile](../Dockerfile) (`ubuntu:26.04` and the AWS Lambda Web
+  Adapter image, which is a named stage there so that it is a `FROM`).
 
-Cargo Dependabot does not see native packages or image rebuilds. Ubuntu
-apt security updates for **libvips**, **libheif**, and the **aom**
-plugins land only when the image is rebuilt against current
-`ubuntu:26.04`. The Lambda Web Adapter pin
-(`public.ecr.aws/awsguru/aws-lambda-adapter:1.0.1` in
-`Dockerfile.lambda`) is on Docker Dependabot's `FROM` list, but adapter
-releases and distro advisories still need a human watch: bump the pin
-and/or rebuild/retag when those matter.
+Dependabot does not see three things, and each needs a human watch:
+
+- **libvips.** The images build it from the upstream release tarball
+  pinned by `VIPS_VERSION` and `VIPS_SHA256` in the Dockerfile. To bump
+  it, take a newer patch release of the same minor from
+  <https://github.com/libvips/libvips/releases>, set both arguments (the
+  release publishes the tarball's SHA-256 next to it), and let the
+  `container` job prove the build. The minor version must stay the one
+  the pinned `libvips` Rust bindings were generated from.
+- **Ubuntu codec packages.** apt security updates for **libheif**, the
+  **aom** plugins, **libjpeg-turbo**, **libpng**, **libwebp**, and the
+  other libraries libvips links land only when the image is rebuilt
+  against current `ubuntu:26.04`.
+- **The Lambda Web Adapter.** The pin
+  (`public.ecr.aws/awsguru/aws-lambda-adapter:1.0.1`) is on Docker
+  Dependabot's `FROM` list, but adapter releases and advisories still
+  deserve a look: bump the pin and rebuild/retag when those matter.
 
 ## Mutation score (`.github/workflows/mutants.yml`)
 
@@ -114,8 +127,8 @@ does not match both versions. The workflow then:
 
 1. Builds and pushes multi-arch OCI images (linux/amd64 + linux/arm64) to
    `ghcr.io/kroofy/pixtega`:
-   - [Dockerfile](../Dockerfile) → `X.Y.Z`, `X.Y`, `latest`
-   - [Dockerfile.lambda](../Dockerfile.lambda) → `X.Y.Z-lambda`, `lambda`
+   - [Dockerfile](../Dockerfile), default target → `X.Y.Z`, `X.Y`, `latest`
+   - [Dockerfile](../Dockerfile), `lambda` target → `X.Y.Z-lambda`, `lambda`
 
    Each architecture builds natively on its own runner (`ubuntu-26.04`
    and `ubuntu-26.04-arm`) — no QEMU emulation for the Rust + libvips
@@ -124,8 +137,9 @@ does not match both versions. The workflow then:
 2. Builds the release binary
    (`pixtega-vX.Y.Z-x86_64-unknown-linux-gnu-ubuntu26.04.tar.gz`) with a
    `SHA256SUMS` file. The binary is x86_64-only and dynamically linked
-   against Ubuntu 26.04 libvips (`libvips42t64` + `libheif-plugin-aomenc`
-   at runtime); the container image is the recommended distribution.
+   against Ubuntu 26.04's own libvips (`libvips42t64` +
+   `libheif-plugin-aomenc` at runtime), not the slimmer build the images
+   carry; the container image is the recommended distribution.
 3. Publishes the npm packages from [js/](../js/) — `pixtega` first, then
    its re-export `@pixtega/url` — straight from the TypeScript source in
    the repository (`npm pack` of the workspaces; no dist build). Before

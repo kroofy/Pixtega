@@ -40,8 +40,13 @@ errors), and unit plus integration tests:
 
 Tests run entirely against loopback fixture servers (including local
 S3-compatible and TLS fixtures) and need no credentials or public network
-access. `./scripts/container-acceptance.sh` additionally exercises the
-Docker image end to end.
+access. `./scripts/container-acceptance.sh` additionally exercises both
+Docker images end to end.
+
+For performance work, `scripts/bench/bench.py` measures startup, latency,
+throughput, and memory per scenario for a binary (after
+`scripts/bench/gen-fixtures.sh`), and `scripts/bench/coldstart.sh` measures
+a container image starting on a cold page cache.
 
 For behavior changes, consider mutation testing (`cargo install
 cargo-mutants && cargo mutants`); configuration and exclusions live in

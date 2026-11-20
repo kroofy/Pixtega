@@ -6,14 +6,15 @@
 # On a v* tag this workflow (stopping first if the versions do not match):
 #   1. builds and pushes multi-arch (linux/amd64 + linux/arm64) OCI images
 #      to ghcr.io/kroofy/pixtega
-#        - Dockerfile        -> X.Y.Z, X.Y, latest
-#        - Dockerfile.lambda -> X.Y.Z-lambda, lambda
+#        - Dockerfile, default target  -> X.Y.Z, X.Y, latest
+#        - Dockerfile, `lambda` target -> X.Y.Z-lambda, lambda
 #      Each architecture builds natively on its own runner (no QEMU for
 #      the Rust + libvips compile); the per-arch digests are then joined
 #      into one manifest list per tag with `docker buildx imagetools create`.
 #   2. builds the release binary (x86_64 only; dynamically linked against
-#      Ubuntu 26.04 libvips; the container image is the recommended
-#      distribution), packages it as a tarball with SHA256SUMS,
+#      Ubuntu 26.04's own libvips, not the slimmer build in the images;
+#      the container image is the recommended distribution), packages it
+#      as a tarball with SHA256SUMS,
 #   3. publishes the npm packages from js/ — `pixtega` first, then its
 #      re-export `@pixtega/url` — via npm trusted publishing (OIDC, with
 #      provenance). The tag minus the leading v must equal both
@@ -180,12 +181,15 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'push' }}
 
+      # Same Dockerfile: only the adapter layer is new, the rest comes
+      # from the builder's cache of the step above.
       - name: Build lambda image
         id: build-lambda
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: Dockerfile.lambda
+          file: Dockerfile
+          target: lambda
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta-lambda.outputs.labels }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'push' }}

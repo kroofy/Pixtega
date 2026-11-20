@@ -31,9 +31,10 @@ updates:
           - "minor"
           - "patch"
 
-  # Both Dockerfile and Dockerfile.lambda live at the repo root (Dependabot
-  # matches any filename containing "Dockerfile"). Group so ubuntu tag/digest
-  # churn and the Lambda Web Adapter pin land in one PR, not one each.
+  # The Dockerfile's FROM lines: ubuntu and the Lambda Web Adapter image
+  # (a named stage there so it is a FROM). Grouped so tag/digest churn lands
+  # in one PR. The libvips source pin in the same file (VIPS_VERSION) is
+  # not something Dependabot can see; docs/ci.md says how it is bumped.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:

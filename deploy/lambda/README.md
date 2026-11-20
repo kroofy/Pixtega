@@ -2,8 +2,8 @@
 
 This guide deploys the service as a Lambda container image behind a
 [Function URL](https://docs.aws.amazon.com/lambda/latest/dg/lambda-urls.html).
-The image is built from [`Dockerfile.lambda`](../../Dockerfile.lambda), which
-is the standard image plus the
+The image is the `lambda` target of the [`Dockerfile`](../../Dockerfile):
+the standard image plus the
 [AWS Lambda Web Adapter](https://github.com/aws/aws-lambda-web-adapter)
 extension. The adapter translates Lambda invocations into plain HTTP against
 the service, so no Lambda-specific code exists in the binary — the same image
@@ -35,7 +35,7 @@ docker tag ghcr.io/kroofy/pixtega:lambda pixtega-lambda
 To build locally, from the repository root:
 
 ```bash
-docker build -f Dockerfile.lambda --platform linux/amd64 -t pixtega-lambda .
+docker build --target lambda --platform linux/amd64 -t pixtega-lambda .
 ```
 
 ## 2. Push to ECR
@@ -125,7 +125,7 @@ aws lambda create-function \
 
 Notes:
 
-- `Dockerfile.lambda` already sets `AWS_LWA_READINESS_CHECK_PROTOCOL=tcp`
+- The image already sets `AWS_LWA_READINESS_CHECK_PROTOCOL=tcp`
   (the service has no HTTP health endpoint — `GET /` is a 400 by design —
   so the adapter waits for the TCP socket instead of an HTTP 200) and
   `AWS_LWA_INVOKE_MODE=response_stream` (to match the streaming Function
@@ -249,11 +249,15 @@ S3 mount, e.g. `${FUNCTION_URL}images/photos/cat.3f9a1c7e.jpg/w1280.webp`.
   the default is 9000), a slow derivation is answered as a real 504 with
   `Cache-Control: no-store` instead. Large AVIF widths are the slow path
   most likely to need this.
-- **Cold starts.** Each cold start loads libvips and validates
-  configuration, including verifying every enabled encoder; the first
-  request on a new execution environment is noticeably slower than warm
-  requests. Use provisioned concurrency if tail latency matters, and put a
-  CDN in front so most traffic never reaches the function at all.
+- **Cold starts.** Each cold start loads the image's files, initializes
+  libvips, and validates configuration, including verifying every enabled
+  encoder; the first request on a new execution environment is slower
+  than warm requests. The image is built to keep that small: its libvips
+  carries only the codecs the service uses, so starting and answering the
+  first request reads 20 MB from the image (with the distribution's
+  libvips it was 62 MB). Use provisioned concurrency if tail latency
+  matters, and put a CDN in front so most traffic never reaches the
+  function at all.
 - **`max_concurrent_derivations` is per instance.** Lambda sends one
   request at a time to each execution environment (unless you have opted
   into multi-concurrency features), so this limit rarely binds there; it
