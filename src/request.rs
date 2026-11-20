@@ -39,9 +39,8 @@ const MAX_CONFIGURABLE_QUALITY: u64 = 100;
 /// `raw_path` is the raw, still-percent-encoded URI path. `raw_query` is
 /// the raw query string without the leading `?`, when one exists.
 ///
-/// On success the returned [`ResolvedRequest`] carries the Mount, the
-/// upstream key (Key Prefix applied), and the resolved Transform. The
-/// Source is guaranteed to be configured.
+/// On success the returned [`ResolvedRequest`] carries the selected Source,
+/// the upstream key (Key Prefix applied), and the resolved Transform.
 ///
 /// This function is pure: it performs no Source I/O of any kind.
 pub fn parse_request(
@@ -67,9 +66,12 @@ pub fn parse_request(
     }
     // Mounts are matched literally; a percent-encoded or otherwise malformed
     // mount simply matches nothing.
-    let source = config
-        .source_for_mount(mount)
+    let source_index = config
+        .sources
+        .iter()
+        .position(|source| source.mount() == mount)
         .ok_or(RequestError::UnknownMount)?;
+    let source = &config.sources[source_index];
 
     match segments.len() {
         1 => return Err(RequestError::MissingSourcePath),
@@ -88,7 +90,7 @@ pub fn parse_request(
     parse_query(raw_query)?;
 
     Ok(ResolvedRequest {
-        mount: mount.to_string(),
+        source: source_index,
         upstream_key: UpstreamKey::new(key_segments),
         transform,
     })

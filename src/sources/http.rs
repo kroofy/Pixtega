@@ -40,12 +40,14 @@ pub struct HttpSource {
 
 impl HttpSource {
     pub fn new(config: &HttpSourceConfig, limits: FetchLimits) -> Result<Self, ConfigError> {
+        // No request timeout on the client: `FetchLimits::within` bounds
+        // the whole exchange (all hops + body), and dropping it cancels the
+        // request. The connect timeout is not a second deadline but how
+        // the connector moves on: it is split across a host's addresses, so
+        // one that never answers cannot use up the budget of the rest.
         let mut builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .tls_backend_rustls()
-            // Belt: per-request timeout; the adapter additionally wraps the
-            // whole exchange (all hops + body) in one tokio timeout.
-            .timeout(limits.timeout)
             .connect_timeout(limits.timeout);
 
         if let Some(ca_path) = &config.ca_certificate_file {
@@ -102,16 +104,11 @@ impl HttpSource {
             }
         }
 
-        // Advertised length check; the header may be absent or false,
-        // so the limit is enforced again below while streaming.
-        let advertised = advertised_length(response.headers());
-        if let Some(advertised) = advertised {
-            if advertised > self.limits.max_bytes {
-                return Err(SourceError::TooLarge {
-                    upstream_status: Some(code),
-                });
-            }
-        }
+        // The advertised length may be absent or false, so the body
+        // enforces the limit again on every chunk.
+        let mut body = self
+            .limits
+            .body(advertised_length(response.headers()), Some(code))?;
 
         let identity = response
             .headers()
@@ -119,23 +116,13 @@ impl HttpSource {
             .and_then(|value| value.to_str().ok())
             .and_then(parse_entity_tag);
 
-        // Preallocate from the advertised length (already bounded by
-        // max_bytes above) so large bodies avoid the repeated
-        // grow-and-copy of an amortized Vec.
-        let mut bytes: Vec<u8> = Vec::with_capacity(advertised.unwrap_or(0) as usize);
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(map_reqwest_error)?;
-            if bytes.len() as u64 + chunk.len() as u64 > self.limits.max_bytes {
-                return Err(SourceError::TooLarge {
-                    upstream_status: Some(code),
-                });
-            }
-            bytes.extend_from_slice(&chunk);
+            body.push(&chunk.map_err(map_reqwest_error)?)?;
         }
 
         Ok(FetchedObject {
-            bytes,
+            bytes: body.into_bytes(),
             upstream_status: Some(code),
             identity,
         })
@@ -146,11 +133,8 @@ impl HttpSource {
             return Ok(None);
         };
         if let Some(advertised) = advertised_length(response.headers()) {
-            if advertised > self.limits.max_bytes {
-                return Err(SourceError::TooLarge {
-                    upstream_status: Some(response.status().as_u16()),
-                });
-            }
+            self.limits
+                .admit(advertised, Some(response.status().as_u16()))?;
         }
         let identity = response
             .headers()
@@ -271,20 +255,12 @@ impl HttpSource {
 impl Source for HttpSource {
     async fn fetch(&self, key: &UpstreamKey) -> Result<FetchedObject, SourceError> {
         let url = self.url_for(key)?;
-        // One timeout for the whole exchange: every redirect hop and the
-        // complete body stream.
-        match tokio::time::timeout(self.limits.timeout, self.fetch_inner(url)).await {
-            Ok(result) => result,
-            Err(_) => Err(SourceError::Timeout),
-        }
+        self.limits.within(self.fetch_inner(url)).await
     }
 
     async fn identify(&self, key: &UpstreamKey) -> Result<Option<IdentifiedObject>, SourceError> {
         let url = self.url_for(key)?;
-        match tokio::time::timeout(self.limits.timeout, self.identify_inner(url)).await {
-            Ok(result) => result,
-            Err(_) => Err(SourceError::Timeout),
-        }
+        self.limits.within(self.identify_inner(url)).await
     }
 }
 

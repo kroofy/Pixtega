@@ -25,7 +25,6 @@ use pixtega::config::{
 };
 use pixtega::errors::ProcessError;
 use pixtega::processor::init_vips;
-use pixtega::sources::SourceRegistry;
 use pixtega::types::OutputFormat;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -273,10 +272,7 @@ fn http_source(port: u16) -> SourceConfig {
 
 async fn spawn_app(config: AppConfig) -> SocketAddr {
     init_vips();
-    let registry = SourceRegistry::from_config(&config)
-        .await
-        .expect("registry construction");
-    let state = AppState::new(config, registry);
+    let state = AppState::new(config).await.expect("state construction");
     serve_state(state).await
 }
 
@@ -287,10 +283,9 @@ async fn spawn_app_with_processor(
     config: AppConfig,
     process: ProcessFn,
 ) -> (SocketAddr, Arc<AppState>) {
-    let registry = SourceRegistry::from_config(&config)
+    let state = AppState::with_processor(config, process)
         .await
-        .expect("registry construction");
-    let state = AppState::with_processor(config, registry, process);
+        .expect("state construction");
     let addr = serve_state(state.clone()).await;
     (addr, state)
 }

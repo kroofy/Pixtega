@@ -12,11 +12,13 @@
 //!   -> HTTP response               (app)
 //! ```
 
-// `unsafe` is allowed only in the isolated FFI island
-// (`processor::vips_ffi`, `#[allow(unsafe_code)]` there); any new unsafe
-// block anywhere else fails the build.
+// `unsafe` is allowed only in two isolated FFI islands, each
+// `#[allow(unsafe_code)]`: `processor::vips_ffi` (libvips) and
+// `allocator::glibc` (the allocator). Any new unsafe block anywhere else
+// fails the build.
 #![deny(unsafe_code)]
 
+pub mod allocator;
 pub mod app;
 pub mod config;
 pub mod errors;

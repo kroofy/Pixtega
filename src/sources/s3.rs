@@ -62,8 +62,10 @@ impl S3Source {
         }
         let shared_config = loader.load().await;
 
+        // No operation timeout: `FetchLimits::within` bounds the whole
+        // exchange, retries and body included. The attempt timeout stays
+        // because the SDK also sizes its credential-load deadline from it.
         let timeout_config = aws_sdk_s3::config::timeout::TimeoutConfig::builder()
-            .operation_timeout(limits.timeout)
             .operation_attempt_timeout(limits.timeout)
             .build();
         let s3_config = aws_sdk_s3::config::Builder::from(&shared_config)
@@ -71,8 +73,6 @@ impl S3Source {
             .timeout_config(timeout_config)
             // Standard retry machinery (attempts, backoff) with a
             // transport-only classifier. Service errors stay one-shot.
-            // `operation_timeout` already includes retries; `Source::fetch`
-            // wraps the same budget again.
             .retry_config(RetryConfig::standard())
             .retry_classifier(TransportRetryClassifier)
             .build();
@@ -96,33 +96,17 @@ impl S3Source {
             .await
             .map_err(map_sdk_error)?;
 
-        // Advertised length check; enforced again below while streaming
-        // because the transport may deliver more than it advertised.
-        let advertised = output.content_length();
-        if let Some(advertised) = advertised {
-            if advertised < 0 || advertised as u64 > self.limits.max_bytes {
-                return Err(SourceError::TooLarge {
-                    upstream_status: Some(200),
-                });
-            }
-        }
+        // The advertised length is enforced again while streaming, because
+        // the transport may deliver more than it advertised.
+        let mut bytes = self
+            .limits
+            .body(advertised_length(output.content_length())?, Some(200))?;
 
         let identity = s3_identity(output.e_tag(), output.version_id());
         let mut body = output.body;
-        // Preallocate from the advertised length (already bounded by
-        // max_bytes above) so large objects avoid the repeated
-        // grow-and-copy of an amortized Vec.
-        let mut bytes: Vec<u8> = Vec::with_capacity(advertised.unwrap_or(0) as usize);
         loop {
             match body.try_next().await {
-                Ok(Some(chunk)) => {
-                    if bytes.len() as u64 + chunk.len() as u64 > self.limits.max_bytes {
-                        return Err(SourceError::TooLarge {
-                            upstream_status: Some(200),
-                        });
-                    }
-                    bytes.extend_from_slice(&chunk);
-                }
+                Ok(Some(chunk)) => bytes.push(&chunk)?,
                 Ok(None) => break,
                 Err(_) => {
                     return Err(SourceError::Unavailable {
@@ -134,7 +118,7 @@ impl S3Source {
         }
 
         Ok(FetchedObject {
-            bytes,
+            bytes: bytes.into_bytes(),
             upstream_status: Some(200),
             identity,
         })
@@ -153,12 +137,8 @@ impl S3Source {
             .await
             .map_err(map_sdk_error)?;
 
-        if let Some(advertised) = output.content_length() {
-            if advertised < 0 || advertised as u64 > self.limits.max_bytes {
-                return Err(SourceError::TooLarge {
-                    upstream_status: Some(200),
-                });
-            }
+        if let Some(advertised) = advertised_length(output.content_length())? {
+            self.limits.admit(advertised, Some(200))?;
         }
 
         Ok(
@@ -173,20 +153,24 @@ impl S3Source {
 #[async_trait]
 impl Source for S3Source {
     async fn fetch(&self, key: &UpstreamKey) -> Result<FetchedObject, SourceError> {
-        // One timeout for the whole exchange, including body streaming,
-        // in addition to the SDK operation timeout configured above.
-        match tokio::time::timeout(self.limits.timeout, self.fetch_inner(key)).await {
-            Ok(result) => result,
-            Err(_) => Err(SourceError::Timeout),
-        }
+        self.limits.within(self.fetch_inner(key)).await
     }
 
     async fn identify(&self, key: &UpstreamKey) -> Result<Option<IdentifiedObject>, SourceError> {
-        match tokio::time::timeout(self.limits.timeout, self.identify_inner(key)).await {
-            Ok(result) => result,
-            Err(_) => Err(SourceError::Timeout),
-        }
+        self.limits.within(self.identify_inner(key)).await
     }
+}
+
+/// The SDK models the object length as signed. A negative one is nonsense
+/// rather than small, so it is refused like a length over the limit.
+fn advertised_length(content_length: Option<i64>) -> Result<Option<u64>, SourceError> {
+    content_length
+        .map(|length| {
+            u64::try_from(length).map_err(|_| SourceError::TooLarge {
+                upstream_status: Some(200),
+            })
+        })
+        .transpose()
 }
 
 fn s3_identity(e_tag: Option<&str>, version_id: Option<&str>) -> Option<ObjectIdentity> {

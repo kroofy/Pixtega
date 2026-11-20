@@ -131,7 +131,7 @@ fn valid_nested_path_resolves_mount_key_and_transform() {
         "/images/public/photos/2024/example.6acca6c1.jpg/w640.webp",
         None,
     );
-    assert_eq!(resolved.mount, "public");
+    assert_eq!(cfg.sources[resolved.source].mount(), "public");
     assert_eq!(
         resolved.upstream_key.joined(),
         "media/photos/2024/example.6acca6c1.jpg"
@@ -225,7 +225,7 @@ fn key_prefix_may_differ_from_mount_or_be_empty() {
         ),
     ] {
         let resolved = ok(&cfg, path, None);
-        assert_eq!(resolved.mount, mount, "path {path:?}");
+        assert_eq!(cfg.sources[resolved.source].mount(), mount, "path {path:?}");
         assert_eq!(resolved.upstream_key.joined(), key, "path {path:?}");
     }
 }

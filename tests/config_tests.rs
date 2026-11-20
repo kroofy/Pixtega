@@ -93,6 +93,10 @@ fn s3_source(extra: &str) -> String {
     )
 }
 
+fn source_for_mount<'a>(config: &'a AppConfig, mount: &str) -> Option<&'a SourceConfig> {
+    config.sources.iter().find(|source| source.mount() == mount)
+}
+
 fn only_source(config: &AppConfig) -> &SourceConfig {
     assert_eq!(config.sources.len(), 1);
     &config.sources[0]
@@ -147,12 +151,10 @@ fn example_configuration_parses_via_load_from_file() {
     assert_eq!(jpeg.default_quality, 85);
     assert_eq!(jpeg.allowed_qualities, vec![70, 92]);
 
-    let public = config.source_for_mount("public").expect("public source");
+    let public = source_for_mount(&config, "public").expect("public source");
     assert_eq!(public.key_prefix_segments(), ["media"]);
 
-    let fixtures = config
-        .source_for_mount("fixtures")
-        .expect("fixtures source");
+    let fixtures = source_for_mount(&config, "fixtures").expect("fixtures source");
     assert!(fixtures.key_prefix_segments().is_empty());
     match fixtures {
         SourceConfig::Filesystem(fs) => {
@@ -162,7 +164,7 @@ fn example_configuration_parses_via_load_from_file() {
         other => panic!("fixtures should be a filesystem source, got {other:?}"),
     }
 
-    let archive = config.source_for_mount("archive").expect("archive source");
+    let archive = source_for_mount(&config, "archive").expect("archive source");
     assert_eq!(archive.key_prefix_segments(), ["originals"]);
     match archive {
         SourceConfig::S3(s3) => {
@@ -526,7 +528,7 @@ fn mount_names_with_digits_and_hyphens_are_valid() {
         let config = load(&config_with(&[], FORMATS, &sources))
             .unwrap_or_else(|err| panic!("mount {mount:?} must be valid: {err}"));
         assert!(
-            config.source_for_mount(mount).is_some(),
+            source_for_mount(&config, mount).is_some(),
             "mount {mount:?} must be registered"
         );
     }

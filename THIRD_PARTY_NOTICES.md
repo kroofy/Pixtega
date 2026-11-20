@@ -15,7 +15,7 @@ third-party software with its own licenses.
 
 These libraries are not distributed in this repository. The container
 images build libvips from its unmodified upstream release tarball (the
-version and SHA-256 are pinned in the `Dockerfile`) and ship its license at
+version and SHA-256 are pinned in `scripts/build-libvips.sh`) and ship its license at
 `/usr/local/share/doc/libvips/LICENSE`. Every other library is installed
 from Ubuntu 26.04 packages; their license texts ship with those packages
 under `/usr/share/doc/<package>/copyright`.

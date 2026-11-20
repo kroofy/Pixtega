@@ -13,14 +13,15 @@ use axum::response::Response;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::{Notify, Semaphore};
 
+use crate::allocator;
 use crate::config::AppConfig;
-use crate::errors::{Outcome, ProcessError, RequestError, SourceError};
+use crate::errors::{ConfigError, Outcome, ProcessError, RequestError, SourceError};
 use crate::etag::derived_etag;
-use crate::logging::{CompletionEvent, SourceErrorEvent};
+use crate::logging::{Completion, SourceErrorEvent};
 use crate::processor;
 use crate::request::parse_request;
 use crate::sources::SourceRegistry;
-use crate::types::{ObjectIdentity, OutputFormat, ResolvedRequest, Transform};
+use crate::types::{ObjectIdentity, ResolvedRequest, Transform};
 
 /// The synchronous processing function run on a blocking thread. The real
 /// pipeline is [`processor::process_image`]; tests may substitute a slow or
@@ -41,7 +42,8 @@ const IDLE_RECLAIM_DELAY: Duration = Duration::from_secs(5);
 /// Shared state for the HTTP application.
 pub struct AppState {
     pub config: AppConfig,
-    pub registry: SourceRegistry,
+    /// One adapter per entry of `config.sources`, in the same order.
+    registry: SourceRegistry,
     /// Process-wide derivation permits: no more than
     /// `max_concurrent_derivations` Source Objects are fetched or processed
     /// at once. Acquired before fetching; released only when the blocking
@@ -55,30 +57,31 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: AppConfig, registry: SourceRegistry) -> Arc<Self> {
+    /// Build the state for `config`, constructing its Source adapters.
+    pub async fn new(config: AppConfig) -> Result<Arc<Self>, ConfigError> {
         Self::with_processor(
             config,
-            registry,
             Arc::new(|bytes, transform, max_megapixels| {
                 processor::process_image(bytes, transform, max_megapixels)
             }),
         )
+        .await
     }
 
     /// [`AppState::new`] with an explicit processing function (test seam).
-    pub fn with_processor(
+    pub async fn with_processor(
         config: AppConfig,
-        registry: SourceRegistry,
         process: ProcessFn,
-    ) -> Arc<Self> {
+    ) -> Result<Arc<Self>, ConfigError> {
+        let registry = SourceRegistry::from_config(&config).await?;
         let permits = config.max_concurrent_derivations;
-        Arc::new(AppState {
+        Ok(Arc::new(AppState {
             config,
             registry,
             derivation_permits: Arc::new(Semaphore::new(permits)),
             derivation_ended: Arc::new(Notify::new()),
             process,
-        })
+        }))
     }
 }
 
@@ -98,13 +101,12 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
 /// standard output once the socket is bound, so a supervisor or test can
 /// wait for readiness.
 pub async fn run(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let registry = SourceRegistry::from_config(&config).await?;
     let listen_address = config.listen_address;
-    let state = AppState::new(config, registry);
+    let state = AppState::new(config).await?;
     tokio::spawn(reclaim_when_idle(
         state.clone(),
         IDLE_RECLAIM_DELAY,
-        processor::release_free_memory,
+        allocator::release_free_memory,
     ));
     let router = build_router(state);
 
@@ -148,12 +150,10 @@ fn shutdown_signal() -> std::io::Result<impl std::future::Future<Output = ()>> {
 /// quiet.
 ///
 /// A derivation's decode and encode scratch is freed when it ends, but the
-/// allocator keeps it mapped for reuse (see
-/// [`processor::release_free_memory`]). Under traffic that reuse is the
-/// point. After a burst it is only resident memory nobody is using: measured
-/// at 296 MB against 48 MB before the burst. So `reclaim` runs once no
-/// derivation has ended for `quiet` and none is in flight, and never while
-/// work is under way.
+/// allocator keeps it mapped for reuse (see [`crate::allocator`]). Under
+/// traffic that reuse is the point. After a burst it is only resident
+/// memory nobody is using. So `reclaim` runs once no derivation has ended
+/// for `quiet` and none is in flight, and never while work is under way.
 pub async fn reclaim_when_idle<F>(state: Arc<AppState>, quiet: Duration, reclaim: F)
 where
     F: Fn() + Clone + Send + 'static,
@@ -177,33 +177,7 @@ where
     }
 }
 
-/// Log fields gathered while answering one request. Only fields that were
-/// actually established are set; the completion event omits the rest.
-struct Report {
-    outcome: Outcome,
-    mount: Option<String>,
-    width: Option<u32>,
-    format: Option<OutputFormat>,
-    upstream_status: Option<u16>,
-    input_bytes: Option<u64>,
-    output_bytes: Option<u64>,
-}
-
-impl Report {
-    fn new(outcome: Outcome) -> Self {
-        Report {
-            outcome,
-            mount: None,
-            width: None,
-            format: None,
-            upstream_status: None,
-            input_bytes: None,
-            output_bytes: None,
-        }
-    }
-}
-
-/// The single request handler. Emits exactly one [`CompletionEvent`] per
+/// The single request handler. Emits exactly one completion event per
 /// request, covering the whole handler in `elapsed_ms`.
 async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Response {
     let started = Instant::now();
@@ -222,24 +196,17 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
     };
 
     let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    let mut event = CompletionEvent::new(response.status().as_u16(), report.outcome, elapsed_ms);
-    event.mount = report.mount;
-    event.width = report.width;
-    event.format = report.format.map(OutputFormat::as_str);
-    event.upstream_status = report.upstream_status;
-    event.input_bytes = report.input_bytes;
-    event.output_bytes = report.output_bytes;
-    event.emit();
+    report.emit(response.status().as_u16(), elapsed_ms);
 
     response
 }
 
-async fn respond(
-    state: &AppState,
+async fn respond<'a>(
+    state: &'a AppState,
     method: &Method,
     uri: &Uri,
     headers: &HeaderMap,
-) -> (Response, Report) {
+) -> (Response, Completion<'a>) {
     // The whole-request budget. Waiting for a derivation permit, fetching
     // the Source Object, and processing all spend from this one deadline,
     // so an operator can keep the service's own answer (a real 504 with
@@ -252,7 +219,7 @@ async fn respond(
     // advertised Content-Length stays that of the equivalent GET response.
     if method != Method::GET && method != Method::HEAD {
         let response = error_response(state, StatusCode::METHOD_NOT_ALLOWED, "method not allowed");
-        return (response, Report::new(Outcome::RejectedRequest));
+        return (response, Completion::new(Outcome::RejectedRequest));
     }
 
     // `parse_request` bounds the origin-form target (path + query). An
@@ -262,7 +229,7 @@ async fn respond(
     if uri.to_string().len() > crate::request::MAX_TARGET_BYTES {
         let err = RequestError::TargetTooLong;
         let response = error_response(state, taxonomy_status(err.status()), err.public_message());
-        return (response, Report::new(err.outcome()));
+        return (response, Completion::new(err.outcome()));
     }
 
     // `Uri` exposes the raw, still-percent-encoded path and query.
@@ -271,22 +238,15 @@ async fn respond(
         Err(err) => {
             let response =
                 error_response(state, taxonomy_status(err.status()), err.public_message());
-            return (response, Report::new(err.outcome()));
+            return (response, Completion::new(err.outcome()));
         }
     };
 
-    let mut report = Report::new(Outcome::Success);
-    report.mount = Some(resolved.mount.clone());
+    let source = state.registry.source(resolved.source);
+    let mut report = Completion::new(Outcome::Success);
+    report.mount = Some(state.config.sources[resolved.source].mount());
     report.width = Some(resolved.transform.width);
     report.format = Some(resolved.transform.format);
-
-    // parse_request only accepts configured Mounts and the registry is built
-    // from the same configuration, so a missing adapter is unreachable.
-    let Some(source) = state.registry.get(&resolved.mount) else {
-        report.outcome = Outcome::SourceUnavailable;
-        let response = error_response(state, StatusCode::INTERNAL_SERVER_ERROR, "internal error");
-        return (response, report);
-    };
 
     // Identify before the permit so a matching revalidation can 304
     // while encodes occupy every slot. Non-timeout identify errors
@@ -412,7 +372,10 @@ async fn respond(
 /// The request ran out of its `request_timeout_ms` budget: a real 504
 /// through the existing failure path, so the client sees
 /// `Cache-Control: no-store` instead of a host-killed 200 envelope.
-fn timeout_response(state: &AppState, mut report: Report) -> (Response, Report) {
+fn timeout_response<'a>(
+    state: &AppState,
+    mut report: Completion<'a>,
+) -> (Response, Completion<'a>) {
     report.outcome = Outcome::Timeout;
     let response = error_response(state, StatusCode::GATEWAY_TIMEOUT, REQUEST_TIMEOUT_MESSAGE);
     (response, report)

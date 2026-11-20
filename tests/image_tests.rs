@@ -163,17 +163,33 @@ fn animated_gif_fixture() -> Vec<u8> {
     buf.into_inner()
 }
 
-/// Animated WebP built through libvips itself (load the GIF with all pages,
-/// then webpsave the multi-page image). GIF is rejected by the loader
-/// whitelist, so this is the way to exercise the animation rule on an
-/// otherwise accepted container. `new_from_buffer` with an `n=-1` option
-/// string is used instead of `ops::gifload_buffer_with_opts`, which
-/// segfaults (still in the 2.3.0 bindings: it passes the read-only
-/// `flags` property through the varargs setter).
+/// Animated WebP built through libvips itself: two frames stacked into one
+/// strip and saved with a page height, so each becomes an animation frame.
+/// GIF is rejected by the loader whitelist, so this is the way to exercise
+/// the animation rule on an otherwise accepted container. It needs only the
+/// WebP saver, so it also works against a libvips with no GIF loader, such
+/// as the one the container images ship.
 fn animated_webp_fixture() -> Vec<u8> {
-    let gif = animated_gif_fixture();
-    let all_pages = VipsImage::new_from_buffer(&gif, "n=-1").expect("fixture: gifload all pages");
-    let webp = libvips::ops::webpsave_buffer(&all_pages).expect("fixture: animated webpsave");
+    const SIDE: usize = 16;
+    // RGB: a black frame on top of a white one.
+    let mut strip = vec![0u8; SIDE * SIDE * 3];
+    strip.resize(2 * SIDE * SIDE * 3, 255);
+    let frames = VipsImage::new_from_memory(
+        &strip,
+        SIDE as i32,
+        2 * SIDE as i32,
+        3,
+        libvips::ops::BandFormat::Uchar,
+    )
+    .expect("fixture: two-frame strip");
+    let webp = libvips::ops::webpsave_buffer_with_opts(
+        &frames,
+        &libvips::ops::WebpsaveBufferOptions {
+            page_height: SIDE as i32,
+            ..Default::default()
+        },
+    )
+    .expect("fixture: animated webpsave");
     assert!(
         webp.len() > 20 && &webp[12..16] == b"VP8X" && (webp[20] & 0x02) != 0,
         "fixture must actually be an animated WebP"

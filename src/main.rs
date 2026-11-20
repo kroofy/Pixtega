@@ -2,14 +2,14 @@
 //! libvips, verify the enabled encoders, build the Source registry, and
 //! serve.
 
-// All FFI lives in the library crate (`processor::vips_ffi`); the binary
-// itself must stay entirely safe.
+// All FFI lives in the library crate (`processor::vips_ffi` and
+// `allocator::glibc`); the binary itself must stay entirely safe.
 #![deny(unsafe_code)]
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use pixtega::{app, config, processor};
+use pixtega::{allocator, app, config, processor};
 
 fn config_source() -> Result<(String, PathBuf), String> {
     // Precedence: CLI path, then CONFIG_FILE, then inline CONFIG.
@@ -53,7 +53,7 @@ fn main() -> ExitCode {
 
     // Before libvips or the runtime start any thread: arenas that already
     // exist are not taken back by the cap.
-    processor::tune_allocator(cfg.max_concurrent_derivations);
+    allocator::tune(cfg.max_concurrent_derivations);
     processor::init_vips();
     let enabled: Vec<_> = cfg.formats.keys().copied().collect();
     if let Err(err) = processor::verify_encoders(&enabled) {
