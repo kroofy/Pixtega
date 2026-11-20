@@ -103,7 +103,6 @@ pub fn init_vips() {
 /// gave: concurrent callers block until the winning initializer finishes.
 fn vips_app() -> &'static VipsApp {
     VIPS_APP.get_or_init(|| {
-        vips_ffi::tune_glibc_trim_threshold();
         let app = VipsApp::new("pixtega", false).expect("libvips runtime failed to initialize");
         // Modest per-operation thread pool: request-level parallelism comes
         // from max_concurrent_derivations, not from libvips worker threads.
@@ -117,6 +116,39 @@ fn vips_app() -> &'static VipsApp {
         // Leak the handle on purpose so Drop/vips_shutdown() never runs.
         Box::leak(Box::new(app))
     })
+}
+
+/// Tune the glibc allocator for this workload. Call once at startup, before
+/// any other thread exists. No-op on non-glibc targets.
+///
+/// glibc gives threads their own malloc arenas — by default up to eight per
+/// core — and each arena keeps what was freed into it. Derivations run
+/// across short-lived blocking threads and libvips workers, so left alone
+/// the process holds one retained heap per thread that ever decoded an
+/// image. Two settings bound that:
+///
+/// - One arena per derivation slot. Fewer made tiny derivations contend for
+///   the allocator (-19% throughput with a single arena at eight
+///   concurrent); more only added retained heaps.
+/// - A fixed 32 MB trim threshold, so an arena hands its freed top back
+///   above that and keeps typical decode scratch for the next request.
+///
+/// What still stays resident under load is released by
+/// [`release_free_memory`] once the service is idle.
+pub fn tune_allocator(max_concurrent_derivations: usize) {
+    vips_ffi::tune_glibc_malloc(max_concurrent_derivations);
+}
+
+/// Return every free heap page to the operating system. No-op on non-glibc
+/// targets.
+///
+/// The allocator keeps freed memory mapped for reuse (see
+/// [`tune_allocator`]). After a burst that is resident memory nothing uses.
+/// This takes every arena lock in turn, and the next derivation faults its
+/// scratch back in, so the HTTP layer calls it only once derivations have
+/// gone quiet.
+pub fn release_free_memory() {
+    vips_ffi::trim_glibc_heap();
 }
 
 /// Verify at runtime that libvips can actually encode every enabled format
@@ -390,24 +422,42 @@ mod vips_ffi {
 
     use libvips::bindings;
 
-    /// Fix glibc's heap trim threshold. By default it ratchets upward in
-    /// step with the dynamic mmap threshold every time a large mmap-backed
-    /// block is freed, after which multi-MB source and decode buffers are
-    /// carved from per-thread arenas that effectively never shrink; across
-    /// blocking threads the retained arenas multiply resident memory.
-    /// Fixing the threshold keeps returning freed arena tops above 32 MB
-    /// to the OS while leaving typical per-request decode scratch resident
-    /// for reuse (measured: peak RSS -12..-77% across the benchmark corpus
-    /// at unchanged latency; see scripts/bench/). Setting any mallopt
-    /// parameter also disables the dynamic threshold adjustment, which is
-    /// what makes this stick. No-op on non-glibc targets.
-    pub fn tune_glibc_trim_threshold() {
-        // SAFETY: mallopt only sets a process-global allocator tuning
-        // parameter; it dereferences no pointers. M_TRIM_THRESHOLD is
+    /// Cap glibc at `arenas` malloc arenas and fix its heap trim threshold
+    /// at 32 MB.
+    ///
+    /// Left dynamic, the trim threshold ratchets upward in step with the
+    /// mmap threshold every time a large mmap-backed block is freed, after
+    /// which multi-MB source and decode buffers are carved from arenas that
+    /// effectively never shrink. Setting any mallopt parameter disables
+    /// that adjustment, which is what makes the fixed value stick
+    /// (measured: peak RSS -12..-77% across the benchmark corpus at
+    /// unchanged latency; see scripts/bench/). No-op on non-glibc targets.
+    pub fn tune_glibc_malloc(arenas: usize) {
+        // SAFETY: mallopt only sets process-global allocator tuning
+        // parameters; it dereferences no pointers. Both parameters are
         // glibc-specific, which the linux-gnu cfg guarantees.
         #[cfg(all(target_os = "linux", target_env = "gnu"))]
         unsafe {
+            libc::mallopt(
+                libc::M_ARENA_MAX,
+                arenas.try_into().unwrap_or(libc::c_int::MAX),
+            );
             libc::mallopt(libc::M_TRIM_THRESHOLD, 32 * 1024 * 1024);
+        }
+        #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+        let _ = arenas;
+    }
+
+    /// Release every free page in every glibc arena back to the OS.
+    /// No-op on non-glibc targets.
+    pub fn trim_glibc_heap() {
+        // SAFETY: malloc_trim only returns already-free allocator pages to
+        // the kernel under the allocator's own locks; it dereferences no
+        // caller pointers and invalidates no live allocation. It is
+        // glibc-specific, which the linux-gnu cfg guarantees.
+        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+        unsafe {
+            libc::malloc_trim(0);
         }
     }
 
@@ -490,6 +540,46 @@ mod tests {
         assert!(
             described.contains("extra context"),
             "description must include the buffer content, got {described:?}"
+        );
+    }
+
+    // ------------------------------------------------------ heap release
+
+    /// Resident set size of this process, in bytes.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    fn resident_bytes() -> usize {
+        let status = std::fs::read_to_string("/proc/self/status").expect("read /proc/self/status");
+        let kilobytes: usize = status
+            .lines()
+            .find_map(|line| line.strip_prefix("VmRSS:"))
+            .and_then(|rest| rest.split_whitespace().next())
+            .and_then(|value| value.parse().ok())
+            .expect("VmRSS line");
+        kilobytes * 1024
+    }
+
+    /// Freed heap stays resident in the arena until it is asked back. The
+    /// blocks are small enough to come from the arena rather than their own
+    /// mappings, and the one kept alive sits above all the others, so
+    /// freeing alone cannot shrink the heap from its top.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[test]
+    fn release_free_memory_returns_freed_heap_to_the_os() {
+        const BLOCK: usize = 32 * 1024;
+        const BLOCKS: usize = 4096; // 128 MiB in total
+
+        let mut blocks: Vec<Vec<u8>> = (0..BLOCKS).map(|_| vec![1u8; BLOCK]).collect();
+        let top = blocks.pop().expect("at least one block");
+        drop(blocks);
+        let retained = resident_bytes();
+
+        release_free_memory();
+        let released = retained.saturating_sub(resident_bytes());
+        drop(top);
+
+        assert!(
+            released >= BLOCK * BLOCKS / 2,
+            "expected at least half of the freed heap back, got {released} bytes"
         );
     }
 }

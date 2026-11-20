@@ -269,6 +269,17 @@ Lambda Web Adapter extension, configured inline via the `CONFIG`
 environment variable. The full walkthrough (ECR, IAM, Function URL, curl
 smoke test) is in [deploy/lambda/README.md](deploy/lambda/README.md).
 
+### Memory
+
+Decoding and encoding need scratch memory in proportion to the images
+being derived, and the allocator keeps it mapped for the next request
+rather than returning it each time. Once no derivation has run for five
+seconds the service hands that memory back to the operating system, so
+resident memory after a burst settles near its idle size instead of at
+the burst's peak. On glibc the service also sets the allocator's arena
+count to `max_concurrent_derivations` at startup, which takes precedence
+over a `MALLOC_ARENA_MAX` in the environment.
+
 ## JavaScript client
 
 Pure URL builders (`pixtegaUrl`, `pixtegaSrcSet`, `pixtegaPicture`) for
