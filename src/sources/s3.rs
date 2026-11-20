@@ -96,33 +96,17 @@ impl S3Source {
             .await
             .map_err(map_sdk_error)?;
 
-        // Advertised length check; enforced again below while streaming
-        // because the transport may deliver more than it advertised.
-        let advertised = output.content_length();
-        if let Some(advertised) = advertised {
-            if advertised < 0 || advertised as u64 > self.limits.max_bytes {
-                return Err(SourceError::TooLarge {
-                    upstream_status: Some(200),
-                });
-            }
-        }
+        // The advertised length is enforced again while streaming, because
+        // the transport may deliver more than it advertised.
+        let mut bytes = self
+            .limits
+            .body(advertised_length(output.content_length())?, Some(200))?;
 
         let identity = s3_identity(output.e_tag(), output.version_id());
         let mut body = output.body;
-        // Preallocate from the advertised length (already bounded by
-        // max_bytes above) so large objects avoid the repeated
-        // grow-and-copy of an amortized Vec.
-        let mut bytes: Vec<u8> = Vec::with_capacity(advertised.unwrap_or(0) as usize);
         loop {
             match body.try_next().await {
-                Ok(Some(chunk)) => {
-                    if bytes.len() as u64 + chunk.len() as u64 > self.limits.max_bytes {
-                        return Err(SourceError::TooLarge {
-                            upstream_status: Some(200),
-                        });
-                    }
-                    bytes.extend_from_slice(&chunk);
-                }
+                Ok(Some(chunk)) => bytes.push(&chunk)?,
                 Ok(None) => break,
                 Err(_) => {
                     return Err(SourceError::Unavailable {
@@ -134,7 +118,7 @@ impl S3Source {
         }
 
         Ok(FetchedObject {
-            bytes,
+            bytes: bytes.into_bytes(),
             upstream_status: Some(200),
             identity,
         })
@@ -153,12 +137,8 @@ impl S3Source {
             .await
             .map_err(map_sdk_error)?;
 
-        if let Some(advertised) = output.content_length() {
-            if advertised < 0 || advertised as u64 > self.limits.max_bytes {
-                return Err(SourceError::TooLarge {
-                    upstream_status: Some(200),
-                });
-            }
+        if let Some(advertised) = advertised_length(output.content_length())? {
+            self.limits.admit(advertised, Some(200))?;
         }
 
         Ok(
@@ -187,6 +167,18 @@ impl Source for S3Source {
             Err(_) => Err(SourceError::Timeout),
         }
     }
+}
+
+/// The SDK models the object length as signed. A negative one is nonsense
+/// rather than small, so it is refused like a length over the limit.
+fn advertised_length(content_length: Option<i64>) -> Result<Option<u64>, SourceError> {
+    content_length
+        .map(|length| {
+            u64::try_from(length).map_err(|_| SourceError::TooLarge {
+                upstream_status: Some(200),
+            })
+        })
+        .transpose()
 }
 
 fn s3_identity(e_tag: Option<&str>, version_id: Option<&str>) -> Option<ObjectIdentity> {

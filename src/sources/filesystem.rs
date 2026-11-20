@@ -110,11 +110,7 @@ fn resolve_file(
             if !step.is_file() {
                 return Err(unavailable("source path is not a regular file"));
             }
-            if step.len() > limits.max_bytes {
-                return Err(SourceError::TooLarge {
-                    upstream_status: None,
-                });
-            }
+            limits.admit(step.len(), None)?;
             metadata = Some(step);
         } else if !step.is_dir() {
             // An intermediate component that is not a directory means the
@@ -153,7 +149,7 @@ fn fetch_blocking(
 ) -> Result<FetchedObject, SourceError> {
     let resolved = resolve_file(root, segments, limits)?;
     let identity = file_identity(segments, &resolved.metadata);
-    let mut fetched = read_limited(&resolved.path, limits.max_bytes, resolved.metadata.len())?;
+    let mut fetched = read_limited(&resolved.path, limits, resolved.metadata.len())?;
     fetched.identity = identity;
     Ok(fetched)
 }
@@ -174,7 +170,11 @@ fn identify_blocking(
 
 /// Read the file in chunks, enforcing the byte limit again while reading
 /// (the metadata check above may not reflect the bytes actually read).
-fn read_limited(path: &Path, max_bytes: u64, size_hint: u64) -> Result<FetchedObject, SourceError> {
+fn read_limited(
+    path: &Path,
+    limits: &FetchLimits,
+    size_hint: u64,
+) -> Result<FetchedObject, SourceError> {
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -184,19 +184,18 @@ fn read_limited(path: &Path, max_bytes: u64, size_hint: u64) -> Result<FetchedOb
         }
         Err(_) => return Err(unavailable("filesystem open failed")),
     };
-    read_all_limited(file, max_bytes, size_hint)
+    read_all_limited(file, limits, size_hint)
 }
 
 /// The chunked read loop, split from the file open so the `Interrupted`
 /// retry and the streaming byte limit can be exercised with an arbitrary
-/// reader. `size_hint` preallocates from the file metadata (bounded by
-/// `max_bytes` by the caller); the limit below stays authoritative.
+/// reader. `size_hint` is the length the file metadata reported.
 fn read_all_limited(
     mut reader: impl Read,
-    max_bytes: u64,
+    limits: &FetchLimits,
     size_hint: u64,
 ) -> Result<FetchedObject, SourceError> {
-    let mut bytes: Vec<u8> = Vec::with_capacity(size_hint.min(max_bytes) as usize);
+    let mut body = limits.body(Some(size_hint), None)?;
     let mut chunk = [0u8; READ_CHUNK_BYTES];
     loop {
         let read = match reader.read(&mut chunk) {
@@ -207,16 +206,11 @@ fn read_all_limited(
         if read == 0 {
             break;
         }
-        if bytes.len() as u64 + read as u64 > max_bytes {
-            return Err(SourceError::TooLarge {
-                upstream_status: None,
-            });
-        }
-        bytes.extend_from_slice(&chunk[..read]);
+        body.push(&chunk[..read])?;
     }
 
     Ok(FetchedObject {
-        bytes,
+        bytes: body.into_bytes(),
         upstream_status: None,
         identity: None,
     })
@@ -246,6 +240,14 @@ mod tests {
         }
     }
 
+    fn limits(max_bytes: u64) -> FetchLimits {
+        FetchLimits {
+            max_bytes,
+            timeout: std::time::Duration::from_secs(1),
+            max_redirects: 0,
+        }
+    }
+
     fn assert_unavailable(result: Result<FetchedObject, SourceError>, what: &str) {
         assert!(
             matches!(result, Err(SourceError::Unavailable { .. })),
@@ -267,7 +269,7 @@ mod tests {
                     Ok(b"def".to_vec()),
                 ],
             },
-            1024,
+            &limits(1024),
             0,
         )
         .expect("interrupted reads must be retried");
@@ -281,7 +283,7 @@ mod tests {
                         Ok(b"abc".to_vec()),
                     ],
                 },
-                1024,
+                &limits(1024),
                 0,
             ),
             "non-Interrupted read error",
@@ -296,7 +298,7 @@ mod tests {
             ScriptedReader {
                 script: vec![Ok(b"12345".to_vec())],
             },
-            4,
+            &limits(4),
             0,
         );
         assert!(
@@ -308,7 +310,7 @@ mod tests {
             ScriptedReader {
                 script: vec![Ok(b"12".to_vec()), Ok(b"34".to_vec())],
             },
-            4,
+            &limits(4),
             0,
         )
         .expect("exactly max_bytes must be accepted");
@@ -321,7 +323,7 @@ mod tests {
     #[test]
     fn open_errors_distinguish_absence_from_unavailability() {
         let dir = tempfile::tempdir().unwrap();
-        let missing = read_limited(&dir.path().join("missing.jpg"), 1024, 0);
+        let missing = read_limited(&dir.path().join("missing.jpg"), &limits(1024), 0);
         assert!(
             matches!(
                 missing,
@@ -332,7 +334,7 @@ mod tests {
             "missing file must be NotFound, got {missing:?}"
         );
         assert_unavailable(
-            read_limited(&dir.path().join("nul\0byte"), 1024, 0),
+            read_limited(&dir.path().join("nul\0byte"), &limits(1024), 0),
             "invalid path open error",
         );
     }
@@ -342,13 +344,8 @@ mod tests {
     #[test]
     fn metadata_errors_other_than_absence_are_unavailable() {
         let dir = tempfile::tempdir().unwrap();
-        let limits = FetchLimits {
-            max_bytes: 1024,
-            timeout: std::time::Duration::from_secs(1),
-            max_redirects: 0,
-        };
         assert_unavailable(
-            fetch_blocking(dir.path(), &["nul\0byte".to_string()], &limits),
+            fetch_blocking(dir.path(), &["nul\0byte".to_string()], &limits(1024)),
             "invalid path metadata error",
         );
     }
