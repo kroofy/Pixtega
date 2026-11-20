@@ -291,6 +291,15 @@ the burst's peak. On glibc the service also sets the allocator's arena
 count to `max_concurrent_derivations` at startup, which takes precedence
 over a `MALLOC_ARENA_MAX` in the environment.
 
+How much a derivation needs depends mostly on the source's format. A 38
+megapixel JPEG, PNG, or WebP source peaks between 35 and 200 MB,
+depending on the format and the output width. An AVIF source is decoded
+whole whatever the output width, at about 20 MB per megapixel and twice
+that with transparency, so a 38 megapixel AVIF peaks above 700 MB. If
+your sources include AVIF, size memory for `max_concurrent_derivations`
+of the largest at once, or lower `max_source_megapixels`.
+`scripts/bench/bench.sh` measures all of this for any image.
+
 ## JavaScript client
 
 Pure URL builders (`pixtegaUrl`, `pixtegaSrcSet`, `pixtegaPicture`) for
