@@ -6,7 +6,7 @@
 //! port announced by its `{"event":"listening",...}` startup line.
 //!
 //! Tests are grouped into numbered acceptance items (the `Item N` comments
-//! below). Item 11 (the container image) lives in
+//! below). Item 11 (the container images) lives in
 //! `scripts/container-acceptance.sh` because it needs Docker.
 
 use std::collections::HashMap;
@@ -1050,4 +1050,63 @@ allow_private_destinations = true
     let events = wait_for_completions(&service, 1).await;
     assert_completion_shape(&events[0]);
     assert_eq!(events[0]["outcome"], "success");
+}
+
+// ---------------------------------------------------------------------------
+// Item 16: SIGTERM lets the in-flight request finish, then exits cleanly
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn e2e_sigterm_finishes_the_in_flight_request_and_exits_cleanly() {
+    let fixture = Fixture::start(HashMap::from([(
+        "/photos/slow.jpg".to_string(),
+        Script::DelayedBytes {
+            bytes: ok_response(&jpeg_fixture(64, 64)),
+            delay_ms: 500,
+        },
+    )]))
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut service = spawn_http_service(dir.path(), &fixture, ConfigOptions::default()).await;
+
+    let addr = service.addr;
+    let in_flight = tokio::spawn(async move {
+        send_request(addr, "GET", "/images/pub/photos/slow.jpg/w320.webp").await
+    });
+    // The request is in flight once its fetch has reached the fixture.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while fixture.hits().is_empty() {
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "the request never reached the fixture"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    let signalled = Command::new("kill")
+        .args(["-TERM", &service.child.id().to_string()])
+        .status()
+        .expect("run kill");
+    assert!(signalled.success(), "kill -TERM must reach the service");
+
+    let response = in_flight.await.unwrap();
+    assert_eq!(response.status, 200, "the in-flight request must finish");
+    assert!(is_webp(&response.body));
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = service.child.try_wait().expect("poll service") {
+            break status;
+        }
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "the service must exit after SIGTERM"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "SIGTERM is a clean shutdown, not a crash: {status}"
+    );
 }

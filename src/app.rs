@@ -10,6 +10,7 @@ use axum::extract::{Request, State};
 use axum::http::response::Builder;
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::Semaphore;
 
 use crate::config::AppConfig;
@@ -80,7 +81,8 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
     axum::Router::new().fallback(handle).with_state(state)
 }
 
-/// Bind `config.listen_address` and serve until shutdown (Ctrl-C).
+/// Bind `config.listen_address` and serve until SIGTERM or SIGINT, then let
+/// in-flight requests finish.
 ///
 /// libvips initialization and encoder verification happen in `main` before
 /// this is called. Prints one `{"event":"listening",...}` JSON line to
@@ -92,6 +94,9 @@ pub async fn run(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState::new(config, registry);
     let router = build_router(state);
 
+    // Handlers are installed before the socket is announced, so a signal
+    // can never arrive between "listening" and being able to act on it.
+    let shutdown = shutdown_signal()?;
     let listener = tokio::net::TcpListener::bind(listen_address).await?;
     let local_address = listener.local_addr()?;
     println!(
@@ -103,13 +108,26 @@ pub async fn run(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     );
 
     axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown)
         .await?;
     Ok(())
 }
 
-async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
+/// Resolves on the first SIGTERM or SIGINT.
+///
+/// SIGTERM is what `docker stop`, ECS, and Kubernetes send. The service runs
+/// as PID 1 in its container, where a signal without a handler is ignored
+/// rather than fatal: unhandled, a stop waits out the whole grace period
+/// and ends in SIGKILL, cutting off whatever was in flight.
+fn shutdown_signal() -> std::io::Result<impl std::future::Future<Output = ()>> {
+    let mut terminate = signal(SignalKind::terminate())?;
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    Ok(async move {
+        tokio::select! {
+            _ = terminate.recv() => {}
+            _ = interrupt.recv() => {}
+        }
+    })
 }
 
 /// Log fields gathered while answering one request. Only fields that were
