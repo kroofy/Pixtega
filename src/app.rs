@@ -13,6 +13,7 @@ use axum::response::Response;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::{Notify, Semaphore};
 
+use crate::allocator;
 use crate::config::AppConfig;
 use crate::errors::{ConfigError, Outcome, ProcessError, RequestError, SourceError};
 use crate::etag::derived_etag;
@@ -105,7 +106,7 @@ pub async fn run(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(reclaim_when_idle(
         state.clone(),
         IDLE_RECLAIM_DELAY,
-        processor::release_free_memory,
+        allocator::release_free_memory,
     ));
     let router = build_router(state);
 
@@ -149,12 +150,10 @@ fn shutdown_signal() -> std::io::Result<impl std::future::Future<Output = ()>> {
 /// quiet.
 ///
 /// A derivation's decode and encode scratch is freed when it ends, but the
-/// allocator keeps it mapped for reuse (see
-/// [`processor::release_free_memory`]). Under traffic that reuse is the
-/// point. After a burst it is only resident memory nobody is using: measured
-/// at 296 MB against 48 MB before the burst. So `reclaim` runs once no
-/// derivation has ended for `quiet` and none is in flight, and never while
-/// work is under way.
+/// allocator keeps it mapped for reuse (see [`crate::allocator`]). Under
+/// traffic that reuse is the point. After a burst it is only resident
+/// memory nobody is using. So `reclaim` runs once no derivation has ended
+/// for `quiet` and none is in flight, and never while work is under way.
 pub async fn reclaim_when_idle<F>(state: Arc<AppState>, quiet: Duration, reclaim: F)
 where
     F: Fn() + Clone + Send + 'static,
